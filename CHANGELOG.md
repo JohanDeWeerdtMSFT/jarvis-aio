@@ -1,3 +1,60 @@
+## [9.5.0] — Telemetry honesty: flag unpriced models + provider-format tests (audit follow-up)
+
+The 9.3.0 review noted that the 9.1.0 cost panel could *understate* spend: the
+default price book treats unknown models as $0, so a mixed priced/unpriced total
+silently under-counted.
+
+**What this lands:**
+- **`llm_provider.telemetry_est_cost()`** now appends a trailing **`+`** when any
+  recorded call used a model the price book doesn't know — the figure is shown as
+  a conservative **lower bound** (`$0.1234+`) rather than silently counting the
+  unpriced call as free. A fully-priced total is unflagged; an unpriced-*only*
+  total still shows the `"—"` placeholder (never a misleading `$0.0000`).
+- **Provider-format + cached-pricing regression tests.** New tests exercise the
+  usage-field extraction across the shapes `_record_usage_shadow` must handle —
+  OpenAI (`prompt_tokens` + `prompt_tokens_details.cached_tokens`), Anthropic
+  (`input_tokens` / `cache_read_input_tokens`), Gemini (`usage_metadata.*_token_count`)
+  — asserting cached tokens are separated from input tokens (non-overlapping), and
+  that the default book bills cached tokens at the input rate when no cache rate
+  is set (so it never under-counts a cache hit).
+- **Still an estimate, still kill-switched.** No change to the enforce gate or the
+  fail-safe to `"—"`. Configurable per-model pricing and cross-restart persistence
+  of usage summaries remain larger follow-ups (the buffer is session-scoped by
+  design, like the panel's uptime figure).
+- **Version** — manifest 9.4.0 → **9.5.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
+## [9.4.0] — Reconcile the kernel-coverage metric + guard it in CI (audit follow-up)
+
+An external 9.3.0 review flagged that `KERNEL_COVERAGE.md` reported **17.9%** in
+its generated block while its prose asserted **16.7%** as "the honest number" —
+and nothing made CI fail when the two diverged. Both were real, from the *same*
+matrix: 17.9% gives observe-only `shadow` cells ⅓ credit; 16.7% excludes them
+(they log, they govern nothing). The honest figure was hand-written in prose, so
+it silently drifted whenever the generated number moved.
+
+**What this lands (no runtime behaviour change — tooling + docs integrity):**
+- **`scripts/kernel_coverage.py`** — adds `strict_coverage_pct()` (the honest
+  scale: `shadow = 0`, only `parity` + `full` count) alongside the weighted one.
+  `render_markdown()` now emits **both** figures, so the honest number is
+  generated, not hand-typed, and can't drift.
+- **CI guard.** `--check` now also runs `doc_block_drift()`: it fails if
+  `KERNEL_COVERAGE.md`'s embedded block (matrix + both percentages) diverges from
+  the generator — a stale hand-edit or an un-regenerated figure now fails the
+  `kernel_coverage` gate instead of disagreeing silently.
+- **`KERNEL_COVERAGE.md`** — the block is regenerated with both figures, and the
+  prose no longer hard-codes a number; it points at the generated honest figure
+  and explains the two scales.
+- Honest coverage stands at **16.7%** today — most consequential action paths
+  (`bulk_control`, `execute_plan`, `run_scene_or_script`, `set_mode`, and the
+  detector paths) are still legacy or only partially wired. Lifting that number
+  — per-path authority / verify / outcome / recovery evidence — remains the real
+  architectural work ahead, tracked by this matrix.
+- **Version** — manifest 9.3.0 → **9.4.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.3.0] — Post-Ω evergreen: `provenance` shadow coverage → the situation domain
 
 The third increment of the #237 trio. Unlike the other two, `provenance` has no
