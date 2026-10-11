@@ -1,3 +1,32 @@
+## [9.9.0] — HAOS fail-safe: SQLite corruption self-heal (audit #5)
+
+The audit's #5 asked for HAOS lifecycle validation incl. **database recovery**.
+Most of it was already covered by the integration lifecycle suite (setup / unload
+/ reload / cold-restart / provider-outage fail-safe / options-reload), but DB
+corruption was a real gap: `kernel/persistence.py` opened a bare connection and
+only caught `OperationalError` (a missing table), not the `DatabaseError` a
+**corrupt** file raises — so a SQLite file truncated by a power loss ("database
+disk image is malformed") would break a store's setup instead of recovering.
+
+**What this lands (real hardening, not just a test):**
+- **`run_migrations` now self-heals on corruption.** If the canonical init path
+  hits a file-corruption error, the bad file (and its `-wal`/`-shm` sidecars) is
+  **quarantined** aside to `<db>.corrupt-<timestamp>` (kept for forensics) and the
+  schema is rebuilt empty — so every store that migrates through this seam
+  (situations, agency, journal, …) comes back working rather than dead.
+- **Strictly scoped.** Only the specific SQLite corruption markers trigger
+  recovery (`malformed`, `file is not a database`, `encrypted…`); a migration's
+  own SQL error is **not** corruption and re-raises untouched, so a healthy
+  database is never quarantined and no data is ever discarded on a plain bug.
+- **Tests** cover the full recovery (garbage file → quarantined + rebuilt +
+  usable), the strict corruption matcher, and the critical negative case (a real
+  SQL error leaves a healthy DB intact).
+- No behaviour change on the healthy path (the normal migration body is unchanged;
+  recovery only runs on an actual corruption error).
+- **Version** — manifest 9.8.0 → **9.9.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.8.0] — Action-path coverage: credit `execute_plan`'s authority contract (audit #4b, 2/N)
 
 Second #4b increment, and partly honest accounting: `execute_plan` already runs

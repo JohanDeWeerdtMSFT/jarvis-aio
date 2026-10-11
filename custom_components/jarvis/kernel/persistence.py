@@ -16,7 +16,9 @@ Assistant import, so it is unit-testable without HA.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from typing import Callable, Iterator, Sequence
 
@@ -101,6 +103,47 @@ def schema_version(db_path, *, timeout: float = DEFAULT_TIMEOUT) -> int:
         conn.close()
 
 
+# Substrings SQLite uses for an unreadable / corrupt / non-database file. Matched
+# strictly so ONLY real file corruption triggers recovery — a migration's own SQL
+# error (a different DatabaseError / OperationalError) must re-raise untouched, so
+# a healthy database is never quarantined and its data never discarded.
+_CORRUPTION_MARKERS = (
+    "malformed",                       # database disk image is malformed
+    "file is not a database",
+    "is not a database",
+    "file is encrypted or is not a database",
+    "disk image is malformed",
+)
+
+
+def _is_corruption(exc: BaseException) -> bool:
+    """True only for a SQLite error that means the file itself is unreadable."""
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    msg = str(exc).lower()
+    return any(m in msg for m in _CORRUPTION_MARKERS)
+
+
+def _quarantine_corrupt(db_path) -> str:
+    """Move a corrupt DB (and its -wal/-shm sidecars) aside so a fresh one can be
+    created, keeping the bad file for forensics. Returns the quarantine base path.
+    Never raises — if a rename fails, the file is removed so recovery can proceed."""
+    base = str(db_path)
+    dest = f"{base}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+    for suffix in ("", "-wal", "-shm"):
+        src = base + suffix
+        if not os.path.exists(src):
+            continue
+        try:
+            os.replace(src, dest + suffix)
+        except OSError:
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+    return dest
+
+
 def run_migrations(
     db_path,
     migrations: Sequence[Migration],
@@ -113,7 +156,34 @@ def run_migrations(
     re-running is idempotent (only migrations past the recorded version run).
     Returns the number applied this call. Everything runs in one transaction, so
     a failing migration rolls the whole batch back and leaves the version intact.
+
+    **Corruption self-heal (HAOS fail-safe):** if the database file is corrupt —
+    e.g. truncated by a power loss, the classic SQLite "database disk image is
+    malformed" — the first access raises, which would otherwise break the store's
+    setup. Here that one specific case is caught: the bad file is quarantined aside
+    (kept for forensics) and the schema is rebuilt from the migrations, so the
+    store comes back empty-but-working rather than dead. A migration's own SQL
+    error is NOT corruption and re-raises untouched, so a healthy database is never
+    discarded.
     """
+    try:
+        return _run_migrations_once(db_path, migrations, timeout=timeout)
+    except sqlite3.DatabaseError as exc:
+        if not _is_corruption(exc):
+            raise
+        quarantined = _quarantine_corrupt(db_path)
+        _LOGGER.error(
+            "kernel.persistence: %s is corrupt (%s) — quarantined to %s and "
+            "rebuilding the schema empty", db_path, exc, quarantined)
+        return _run_migrations_once(db_path, migrations, timeout=timeout)
+
+
+def _run_migrations_once(
+    db_path,
+    migrations: Sequence[Migration],
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> int:
     applied = 0
     with transaction(db_path, timeout=timeout) as conn:
         conn.execute(
