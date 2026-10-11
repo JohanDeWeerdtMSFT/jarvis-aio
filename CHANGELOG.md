@@ -1,3 +1,30 @@
+## [9.8.0] — Action-path coverage: credit `execute_plan`'s authority contract (audit #4b, 2/N)
+
+Second #4b increment, and partly honest accounting: `execute_plan` already runs
+**every step** through the confirm-gate + kernel authority engine
+(`authority_bridge.enforced_decision`, the same max-restriction belt as
+`control_device`) — but the coverage matrix never credited it, declaring only
+`event` + `plan`.
+
+**What this lands:**
+- **`execute_plan` authority declared at parity** (`·` → `◑`), backed by a new
+  test asserting the engine actually runs per step — so the matrix reflects the
+  real wiring instead of under-counting it.
+- Verified `run_scene_or_script` and `set_mode` genuinely have **no** authority
+  gate (they activate scenes/modes, not per-entity protected services), so their
+  authority cells correctly stay blank — no inflation.
+- **Honest coverage: 17.5% → 18.3%** (weighted 18.7% → 19.4%), generated and
+  CI-guarded by the 9.4.0 reconciliation.
+- No code or behaviour change — the authority wiring already existed; this credits
+  it accurately and locks it in with a test.
+- **Version** — manifest 9.7.0 → **9.8.0**.
+
+Remaining #4b work: the non-authority contracts on the legacy paths need genuine
+new wiring (e.g. world-model reads, outcome records where meaningful) and will
+land as their own PRs; then #5 (HAOS lifecycle tests).
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.7.0] — Action-path coverage: `bulk_control` authority parity (audit #4b, 1/N)
 
 First increment of the audit's larger architectural item (#4b): lifting the
