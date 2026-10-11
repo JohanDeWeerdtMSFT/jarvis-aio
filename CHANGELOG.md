@@ -1,3 +1,32 @@
+## [9.13.0] — `goals` onto the kernel spine #1 (coverage 28.4% → 29.6%)
+
+First increment of the agreed 80%-of-applicable push, and a safe one: additive,
+best-effort, **no enforce flip**, no change to how goals are chosen or run.
+
+`goals` is an *orchestration* path — when a goal comes due it runs the headless
+agent, whose tool-calls actuate through the already-wired paths. What `goals`
+itself puts on the kernel spine:
+
+- **`plan` ◐ shadow (credited).** Goals already express their ordered steps as a
+  kernel `Plan` and durably journal it (`_shadow_plan`, F1/F2) — the Plan is built
+  and recorded but never executed or consulted; the goal store stays
+  authoritative. The coverage matrix never credited this; now it does.
+- **`event` ◑ parity (new).** Each goal **engage/close** now publishes a canonical
+  `goal.transition` `JarvisEvent` on the kernel bus (`events.publish_goal` →
+  `kernel.event.from_goal`), the same nervous-system wiring situations got in D4.
+  Parity: the event enters the stream and the ledger records it, but no consumer
+  reacts to it yet. Best-effort — it never affects the goal run.
+
+`world_model` / `authority` / `verify` / `outcome` stay honest **gaps** for
+`goals`: it doesn't read state or actuate directly (the agent does), so they are
+not claimed here. `situation` is N/A by design.
+
+- **Honest coverage: 28.4% → 29.6%** of applicable cells (the one new parity cell).
+- **Tests:** the `from_goal` builder, `events.publish_goal` (bus + no-bus), and
+  `async_process_due` actually publishing `engaged`/`closed` on the bus.
+- Six kernel gates + audit + docs-sync + changelog-extract green. **Version** —
+  manifest 9.12.0 → **9.13.0**.
+
 ## [9.12.0] — Departure settings: wider entity pickers + clearer help
 
 The **Origin tracker** and **Travel sensor** dropdowns in Settings → Home were

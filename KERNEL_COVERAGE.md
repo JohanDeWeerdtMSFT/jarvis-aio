@@ -44,14 +44,14 @@ grid) are kept underneath for continuity.
 | `intrusion` | ◑ | · | ◑ | – | – | – | – |
 | `hazard` | ◑ | · | ◑ | – | – | – | – |
 | `delivery` | ◑ | · | ◑ | – | – | – | – |
-| `goals` | · | · | – | · | · | · | · |
+| `goals` | ◑ | · | – | · | ◐ | · | · |
 | `proactive` | · | · | – | · | · | · | · |
 | `friday` | · | · | – | · | · | · | · |
 | `homer` | · | · | – | · | · | · | · |
 
-**Kernel coverage (applicable): 28.4%** — honest credit (observe-only shadow earns 0; only parity + full count) over the 54 cells that can actually be wired. The 30 N/A-by-design cells (`–`, listed below) are excluded, not scored as gaps. **This is the number to move.**
+**Kernel coverage (applicable): 29.6%** — honest credit (observe-only shadow earns 0; only parity + full count) over the 54 cells that can actually be wired. The 30 N/A-by-design cells (`–`, listed below) are excluded, not scored as gaps. **This is the number to move.**
 
-Across all 84 cells (N/A counted as un-wired): 19.4% weighted / 18.3% honest. Legend: `·` none  `◐` shadow  `◑` parity  `●` full  `–` n/a.
+Across all 84 cells (N/A counted as un-wired): 20.6% weighted / 19.0% honest. Legend: `·` none  `◐` shadow  `◑` parity  `●` full  `–` n/a.
 
 **N/A-by-design cells** — excluded from the applicable denominator because the contract is structurally meaningless for the path. Every exclusion is listed with its reason so a real gap can't hide here:
 
@@ -204,8 +204,18 @@ one release at a time.
   `plan` ◐) with each executed target routed through the envelope (`world_model`
   ◑, `event` ◑, `authority` ◑). Fire-and-forget, so per-device verify/outcome are
   **n/a** (`–`); protected devices are still skipped.
-- **`goals` / `proactive` / `friday` / `homer`** — the four still-legacy actuation
-  paths, not yet wired to any kernel contract. Every actuation contract
+- **`goals`** — an *orchestration* path: when a goal comes due it runs the
+  headless agent, whose tool-calls actuate through the already-wired paths. What
+  goals owns on the spine so far: its steps are expressed as a kernel `Plan` and
+  durably journaled (`_shadow_plan`, F1/F2, `plan` ◐ shadow — built and recorded
+  but never executed or consulted; the goal store stays authoritative), and each
+  engage/close publishes a canonical `goal.transition` `JarvisEvent`
+  (`publish_goal`, `event` ◑ parity — enters the stream + ledger, no consumer
+  reacts yet). `world_model`/`authority`/`verify`/`outcome` stay honest **gaps**
+  (`·`): goals doesn't read state or actuate directly (the agent does), so they
+  are not claimed here; `situation` is n/a (`–`).
+- **`proactive` / `friday` / `homer`** — the three still-legacy actuation paths,
+  not yet wired to any kernel contract. Every actuation contract
   (event/world_model/authority/plan, and verify/outcome pending each path's shape)
   is an applicable **gap** (`·`) counting against the number; only `situation` is
   n/a (`–`, an imperative action is not a situation lifecycle). These are the

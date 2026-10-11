@@ -58,3 +58,18 @@ def publish_situation(hass, situation, *, action=None) -> None:
         publish(hass, ev)
     except Exception as exc:  # pragma: no cover - defensive
         _LOGGER.debug("situation event publish failed: %s", exc)
+
+
+def publish_goal(hass, action, *, goal_id=None, title=None, status=None,
+                 correlation_id=None) -> None:
+    """Publish a goal lifecycle transition as a canonical JarvisEvent (goals onto
+    the spine). Best-effort — never raises into the goal store's authoritative
+    path. ``action`` is the transition verb ("engaged", "closed"); ``status`` is
+    the goal's resulting state (active / done / failed / cancelled)."""
+    try:
+        from .kernel.event import from_goal
+        ev = from_goal(action, goal_id=goal_id, title=title, status=status,
+                       correlation_id=correlation_id)
+        publish(hass, ev)
+    except Exception as exc:  # pragma: no cover - defensive
+        _LOGGER.debug("goal event publish failed: %s", exc)
