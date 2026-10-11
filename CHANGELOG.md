@@ -1,3 +1,33 @@
+## [9.2.0] — Post-Ω evergreen: `outcome` → enforce (owner-authorized M loop)
+
+The second evergreen increment of the #237 trio. `outcome` is a *measurement*
+primitive — one actuation yields one structured `Outcome` from a single
+verification verdict — so it has no honest agreement-parity (the value would be
+compared against itself). Its real enforce is Phase M authoritatively consuming
+those structured outcomes, which the owner has now authorized.
+
+**What this lands:**
+- **`outcome` → enforce.** The `learning_enforce` flip defaults **ON**
+  (`actuation.LEARNING_ENFORCE = True`): Phase M folds each verified actuation's
+  structured `kernel.outcome.Outcome` into the capability's **persisted** trust
+  (`capability_trust.json`) and feeds it back as the next learning prior — the
+  learning loop is closed, trust accumulates across restarts instead of resetting
+  to the neutral 0.5 each tick. M reads the structured records, never raw logs.
+- **Kill-switch + fail-safe.** `LEARNING_ENFORCE` / the `learning_enforce` config
+  key reverts to the neutral-prior behaviour (store never written); any error
+  falls back to the neutral prior and persists nothing. The gate was converted to
+  the owner-authorized-ON pattern (module flag is master; the config key turns it
+  off), matching the other enforce flips.
+- **No outward behaviour change today.** `learned_trust(cap)` is read only inside
+  the learning loop itself — nothing yet consumes it to gate an actuation or an
+  autonomy grant — so closing the loop persists learning state without altering
+  any decision. Wiring a consumer (e.g. graduated autonomy reading the trust) is
+  a separate, later step.
+- **Adoption matrix:** `outcome` shadow → enforce; Constitution ledger regenerated.
+- **Version** — manifest 9.1.0 → **9.2.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.1.0] — Post-Ω evergreen: `token_telemetry` → enforce (TC4)
 
 The first evergreen increment after the Ω capstone, closing one of the three

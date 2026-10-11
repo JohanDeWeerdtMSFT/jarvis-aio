@@ -101,7 +101,7 @@ would otherwise allow the action. Derived (child) tokens never outlive their par
 | `long_horizon` | ● enforce |
 | `loop_detect` | ● enforce |
 | `optimize` | ◑ parity |
-| `outcome` | ◐ shadow |
+| `outcome` | ● enforce |
 | `persistence` | · pure |
 | `plan` | ◑ parity |
 | `priority` | · pure |

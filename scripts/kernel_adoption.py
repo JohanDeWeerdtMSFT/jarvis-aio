@@ -257,11 +257,17 @@ _DECLARED: dict[str, dict] = {
     # outcome: canonical outcome model (Epistemic Fabric, pre-Phase M). A
     # structured Outcome (intended/observed/success/confidence/deviation/cause/
     # side_effects/feedback) with a distilled learning_signal in [-1,1], so M
-    # reads structure rather than re-reading logs. SHADOW (#237): actuation.
-    # outcome() emits a kernel.outcome.Outcome (via from_verification) alongside
-    # the canonical ActuatorOutcome on every verified actuation — log-only,
-    # nothing reads it yet. Parity vs current feedback next, enforce when M reads.
-    "outcome":      {"stage": "shadow",  "owners": ["actuation"]},
+    # reads structure rather than re-reading logs. ENFORCE (#237, 9.2.0): with the
+    # owner-authorized learning_enforce flip ON, Phase M authoritatively consumes
+    # the structured Outcome records — the per-capability trust it derives is now
+    # PERSISTED (capability_trust.json) and fed back as the next prior, closing the
+    # learning loop. A measurement primitive (one actuation → one Outcome from a
+    # single verification verdict), so there is no independent agreement-parity to
+    # earn — shadow → enforce directly, the owner's call. Kill-switch back to the
+    # neutral-prior fail-safe: LEARNING_ENFORCE / the `learning_enforce` config key.
+    # (No consumer reads the persisted trust to gate actuation/autonomy yet, so the
+    # loop closes without changing any outward decision today.)
+    "outcome":      {"stage": "enforce", "owners": ["actuation"]},
     # provenance: where a piece of state came from (Epistemic Fabric, audit-
     # added). A Provenance pairs a value with source / observed-at / confidence /
     # model / corroboration / expiry; select_authoritative picks the freshest

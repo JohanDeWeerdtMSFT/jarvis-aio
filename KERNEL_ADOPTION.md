@@ -81,7 +81,7 @@ explicit per-flip owner go/no-go.
 | `long_horizon` | ● enforce | `continuity` |
 | `loop_detect` | ● enforce | `actuation` |
 | `optimize` | ◑ parity | `decision_record` |
-| `outcome` | ◐ shadow | `actuation` |
+| `outcome` | ● enforce | `actuation` |
 | `persistence` | · pure | — |
 | `plan` | ◑ parity | `actuation`, `agent`, `goals` |
 | `priority` | · pure | — *(staged ahead)* |

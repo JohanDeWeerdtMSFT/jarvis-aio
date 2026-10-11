@@ -1,10 +1,13 @@
 """Phase M enforce — the learning loop is closed: per-capability trust is
-persisted and fed back as the prior (owner-gated, default OFF).
+persisted and fed back as the prior. Owner-authorized ON (9.2.0, #237).
 
-Default OFF keeps the neutral 0.5 prior and never writes the store; on, a
-verified-outcome window nudges the capability's trust, which is persisted to
-<config>/jarvis/capability_trust.json and reloads across a restart. Fail-safe:
-a hass without a usable config path never raises and never corrupts the store.
+ON by default: a verified-outcome window nudges the capability's trust, which is
+persisted to <config>/jarvis/capability_trust.json and reloads across a restart.
+Kill-switch back to the neutral 0.5 prior via the module flag (LEARNING_ENFORCE)
+or the `learning_enforce` config key. Fail-safe: a hass without a usable config
+path never raises and never corrupts the store. (No consumer reads the persisted
+trust to gate actuation/autonomy yet, so the loop closes without changing any
+outward decision.)
 """
 import types
 
@@ -17,7 +20,7 @@ def _reset(m):
     m._LEARN_STORE_PATH = None
     m._LEARN_LAST_SAVE = 0.0
     m._recent_outcomes.clear()
-    m.LEARNING_ENFORCE = False
+    m.LEARNING_ENFORCE = True   # shipped default (owner-authorized ON)
 
 
 @pytest.fixture
@@ -57,21 +60,28 @@ def _load_window(actuation, O, cap, signals):
 
 
 # ── gate + accessor ──────────────────────────────────────────────────────────
-def test_enforce_off_by_default(actuation):
+def test_enforce_on_by_default(actuation):
+    # owner-authorized ON: no config needed (the key defaults True)
+    assert actuation._learning_enforce_on() is True
+
+
+def test_kill_switch_via_module_flag(actuation, monkeypatch):
+    monkeypatch.setattr(actuation, "LEARNING_ENFORCE", False)
     assert actuation._learning_enforce_on() is False
 
 
-def test_enforce_on_via_config(actuation, cfg):
-    cfg["learning_enforce"] = True
-    assert actuation._learning_enforce_on() is True
+def test_kill_switch_via_config(actuation, cfg):
+    cfg["learning_enforce"] = False
+    assert actuation._learning_enforce_on() is False
 
 
 def test_learned_trust_default_is_neutral(actuation):
     assert actuation.learned_trust("nope") == actuation._CAP_TRUST_PRIOR
 
 
-# ── default OFF: nothing persists ────────────────────────────────────────────
-def test_off_persists_nothing(actuation, O, tmp_path):
+# ── killed: nothing persists ─────────────────────────────────────────────────
+def test_killed_persists_nothing(actuation, O, tmp_path, monkeypatch):
+    monkeypatch.setattr(actuation, "LEARNING_ENFORCE", False)   # kill-switch
     hass = _hass(tmp_path)
     _load_window(actuation, O, "light", [1.0, 1.0, 1.0])
     oc = actuation._recent_outcomes[-1]
@@ -80,9 +90,8 @@ def test_off_persists_nothing(actuation, O, tmp_path):
     assert not tmp_path.joinpath("jarvis", "capability_trust.json").exists()
 
 
-# ── enforce ON: closed loop persists + reloads ───────────────────────────────
-def test_on_persists_and_reloads(actuation, O, cfg, tmp_path):
-    cfg["learning_enforce"] = True
+# ── enforce ON (default): closed loop persists + reloads ─────────────────────
+def test_on_persists_and_reloads(actuation, O, tmp_path):
     hass = _hass(tmp_path)
     _load_window(actuation, O, "light", [1.0, 1.0, 1.0])     # positive track record
     oc = actuation._recent_outcomes[-1]
@@ -100,8 +109,7 @@ def test_on_persists_and_reloads(actuation, O, cfg, tmp_path):
     assert actuation.learned_trust("light") == pytest.approx(trust)
 
 
-def test_on_feeds_prior_back(actuation, O, cfg, tmp_path):
-    cfg["learning_enforce"] = True
+def test_on_feeds_prior_back(actuation, O, tmp_path):
     hass = _hass(tmp_path)
     actuation._LEARN_STORE["lock"] = 0.80                    # an already-earned prior
     _load_window(actuation, O, "lock", [1.0, 1.0])
@@ -112,8 +120,7 @@ def test_on_feeds_prior_back(actuation, O, cfg, tmp_path):
 
 
 # ── fail-safe ────────────────────────────────────────────────────────────────
-def test_fail_safe_bad_hass(actuation, O, cfg):
-    cfg["learning_enforce"] = True
+def test_fail_safe_bad_hass(actuation, O):
     bad = types.SimpleNamespace(config=types.SimpleNamespace())   # no .path
     _load_window(actuation, O, "light", [1.0])
     oc = actuation._recent_outcomes[-1]
