@@ -52,8 +52,13 @@ def _cfg(key: str, default):
 
 
 def is_enabled() -> bool:
-    """Semantic search is on when the user opted in AND an Ollama base URL is
-    configured (embeddings need somewhere to call)."""
+    """Semantic search is on when the user opted in. Embeddings always have a
+    base URL to call — an explicitly configured one, or the standard local Ollama
+    address as a fallback (the same default the LLM provider uses) — so opting in
+    on a stock HAOS + Ollama install just works. If Ollama or the embed model is
+    unreachable, embed/search degrade to keyword (FTS) search, so this never
+    forces a broken path; it only stops reporting the feature off when the user
+    turned it on."""
     return bool(_cfg("semantic_search", False)) and bool(_ollama_base())
 
 
@@ -63,11 +68,18 @@ def _model() -> str:
 
 def _ollama_base() -> Optional[str]:
     """Resolve the Ollama host from the same config the LLM layer uses. Accepts
-    a bare host:port and returns a clean base (no trailing slash, no /v1)."""
+    a bare host:port and returns a clean base (no trailing slash, no /v1).
+
+    When no base URL is configured, fall back to the standard local Ollama
+    address — the SAME default ``llm_provider.create_provider`` applies — so a
+    blank-URL install embeds against the running Ollama instead of silently
+    disabling semantic search. If nothing is listening there, embed/search fail
+    safe to keyword search, so the fallback never breaks a working setup."""
     base = _cfg("embed_base_url", "") or _cfg("llm_base_url", "")
     base = str(base or "").strip().rstrip("/")
     if not base:
-        return None
+        from .const import DEFAULT_OLLAMA_BASE_URL
+        base = DEFAULT_OLLAMA_BASE_URL.rstrip("/")
     if base.endswith("/v1"):        # strip the OpenAI-compat suffix if present
         base = base[:-3]
     return base

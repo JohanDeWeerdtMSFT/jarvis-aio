@@ -88,6 +88,15 @@ def resolve_provider_base_url(config: dict, provider: str) -> str | None:
         return None
     return config.get(field) or config.get("llm_base_url") or None
 
+
+# The address Ollama listens on for a stock Home Assistant OS + Ollama add-on
+# install. The LLM provider factory (``llm_provider.create_provider``), the
+# embeddings layer, and the service-health check all fall back to THIS when the
+# base URL is left blank, so a blank-URL Ollama install reads as "configured and
+# reachable" everywhere instead of one layer happily using the default while
+# another reports the service off. Keep it as the single source of that default.
+DEFAULT_OLLAMA_BASE_URL = "http://homeassistant.local:11434/v1"
+
 CONF_NOTIFY_SERVICE           = "notify_service"
 
 # ─── Driving Mode (v7.89.0) ──────────────────────────────────────────────────

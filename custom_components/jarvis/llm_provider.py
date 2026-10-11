@@ -938,9 +938,12 @@ def create_provider(
         )
         cls = GroqProvider
 
-    # Default base URLs for provider-specific cases
+    # Default base URLs for provider-specific cases. The default lives in const
+    # as the single source of truth, shared with the embeddings layer and the
+    # service-health check so they never disagree about a blank-URL Ollama.
     if provider_name == "ollama" and not base_url:
-        base_url = "http://homeassistant.local:11434/v1"
+        from .const import DEFAULT_OLLAMA_BASE_URL
+        base_url = DEFAULT_OLLAMA_BASE_URL
 
     try:
         return cls(api_key=api_key, model=model, base_url=base_url)
