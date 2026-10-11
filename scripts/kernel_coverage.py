@@ -15,7 +15,18 @@ JARVIS acts on the home) it declares, per pipeline contract, how far that path i
 wired onto the kernel — ``none / shadow / parity / full`` — and the script
 verifies every non-``none`` claim against a piece of **evidence** that must be
 present in the path's source (so the matrix cannot drift into optimistic
-fiction). It prints a single honest coverage percentage.
+fiction).
+
+**The headline is the honest *applicable-cell* figure.** Not every contract can
+exist for every path — a one-shot toggle is not a situation; a fire-and-forget
+bulk write has no single end-state to verify; a detection path observes and never
+actuates. Those cells are declared **N/A-by-design** (each with a reason, in a
+rendered ledger) and excluded from the denominator, so the percentage measures
+progress against what can actually be wired rather than being permanently diluted
+by cells that are structurally meaningless. The all-cells figures (weighted and
+honest over the full grid) are still printed underneath for continuity. N/A is
+held to a conservative bar — when in doubt a cell stays an un-wired *gap*, which
+lowers the number — and every N/A reason is listed so a real gap can't hide as one.
 
     python3 scripts/kernel_coverage.py             # the matrix + coverage %
     python3 scripts/kernel_coverage.py --check      # + fail on evidence drift
@@ -44,11 +55,33 @@ _CONTRACTS = ["event", "world_model", "situation", "authority", "plan",
 _WEIGHT = {"none": 0.0, "shadow": 1 / 3, "parity": 2 / 3, "full": 1.0}
 _STRICT_WEIGHT = {"none": 0.0, "shadow": 0.0, "parity": 2 / 3, "full": 1.0}
 _ICON = {"none": "·", "shadow": "◐", "parity": "◑", "full": "●"}
+# A cell marked N/A-by-design (see each path's ``na`` map): the contract is
+# structurally meaningless for that path, so it is excluded from the honest
+# *applicable* denominator rather than counted as an un-wired gap. Rendered with
+# its own glyph and listed, with its reason, in the N/A ledger — the mechanism
+# that keeps "N/A" from becoming a hiding place for real gaps.
+_NA_ICON = "–"
 
 
-# Behaviour-bearing paths → the module file that carries the path, and the
-# declared stage + evidence per contract. A contract absent from "contracts"
-# is "none" (the path does not pass through that kernel contract yet).
+# Behaviour-bearing paths → the module file that carries the path, the declared
+# stage + evidence per contract, and a per-path ``na`` map declaring which
+# contracts are **N/A-by-design** (structurally meaningless for that path), each
+# with a concrete reason.
+#
+# Three states per cell, not two:
+#   * declared in ``contracts``  → wired at that stage (evidence verified);
+#   * listed in ``na``           → N/A-by-design (excluded from the applicable
+#                                   denominator, shown with its reason);
+#   * neither                    → an un-wired **gap** ("none"): applicable but
+#                                   not yet wired, so it counts *against* us.
+#
+# N/A is held to a conservative bar on purpose: a contract is N/A only when it
+# cannot meaningfully exist for the path (a one-shot toggle is not a situation;
+# a fire-and-forget bulk write has no single end-state to verify; a detection
+# path observes and never actuates, so it has no authority/plan/outcome). When
+# in doubt a cell is left a gap, which lowers the number — the honest failure
+# mode. Every ``na`` reason is rendered into the ledger so a real gap can never
+# be quietly reclassified as N/A to flatter the percentage.
 _PATHS: dict[str, dict] = {
     "control_device": {
         "module": "agent.py",
@@ -72,6 +105,10 @@ _PATHS: dict[str, dict] = {
             # Full — the planner owns execution, not just a shadow description.
             "plan": {"stage": "full", "evidence": "aexecute_plan"},
         },
+        "na": {
+            "situation": "a single imperative device actuation is not a "
+                         "situation lifecycle (no open/close state to model)",
+        },
     },
     # Recorded as one explicit N-step kernel Plan (shadow) and each executed
     # target routed through the actuation envelope (B3): WorldModel context +
@@ -86,6 +123,13 @@ _PATHS: dict[str, dict] = {
             "authority": {"stage": "parity", "evidence": "record_control_parity"},
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
             "plan": {"stage": "shadow", "evidence": "bulk_plan"},
+        },
+        "na": {
+            "situation": "imperative multi-device actuation, not a situation "
+                         "lifecycle",
+            "verify": "fire-and-forget across many targets — no single expected "
+                      "end-state to read back",
+            "outcome": "fire-and-forget — no per-device actuator outcome record",
         },
     },
     # Each step's execution routes through the kernel planner
@@ -102,11 +146,19 @@ _PATHS: dict[str, dict] = {
             "plan": {"stage": "full", "evidence": "aexecute_plan"},
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
         },
+        "na": {
+            "situation": "an imperative multi-step plan is not a situation "
+                         "lifecycle",
+            "verify": "arbitrary services per step — no single expected "
+                      "end-state to read back",
+            "outcome": "arbitrary services — no single actuator outcome record",
+        },
     },
     # Activates scenes/scripts/automations. Routed through the shared actuation
     # envelope (B1): WorldModel context, actuation event, shadow plan. No
-    # deterministic end-state, so no verify/outcome; no confirm-gate, so no
-    # authority cell.
+    # deterministic end-state, so no verify/outcome. Authority is a *gap* (not
+    # N/A): a scene/script can do anything a confirm-gate would guard, so it is
+    # honestly counted as applicable-but-unwired.
     "run_scene_or_script": {
         "module": "agent.py",
         "contracts": {
@@ -114,21 +166,44 @@ _PATHS: dict[str, dict] = {
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
             "plan": {"stage": "shadow", "evidence": "actuation.plan_shadow"},
         },
+        "na": {
+            "situation": "scene/script activation is imperative, not a "
+                         "situation lifecycle",
+            "verify": "a scene has no single deterministic end-state to read "
+                      "back",
+            "outcome": "no single expected end-state — no actuator outcome "
+                       "record",
+        },
     },
     # Mode directive whose entry applies a mode scene (mode_scene). Routed
     # through the actuation envelope (B2): actuation event + shadow plan for the
     # mode change. No single-entity context (so no world_model) and no
     # deterministic end-state (so no verify/outcome); the target is the mode.
+    # Authority is a *gap* (not N/A): a mode change applies scenes that can be
+    # consequential, so it is honestly counted as applicable-but-unwired.
     "set_mode": {
         "module": "agent.py",
         "contracts": {
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
             "plan": {"stage": "shadow", "evidence": "actuation.plan_shadow"},
         },
+        "na": {
+            "world_model": "the target is an abstract mode, not a single entity "
+                           "with pre/post state to snapshot",
+            "situation": "a mode directive is imperative, not a situation "
+                         "lifecycle",
+            "verify": "the mode's home effect is a scene — no single "
+                      "deterministic end-state to read back",
+            "outcome": "no single expected end-state — no actuator outcome "
+                       "record",
+        },
     },
     # Intrusion mirrors its lifecycle into the kernel Situation state machine AND
     # (D1) verifies the mirrored state agrees with the legacy verdict, log-only —
     # genuine parity, not a blind shadow copy. Evidence is the parity check.
+    # A detection path: it observes and raises a situation; it does not itself
+    # actuate the home (responses flow through control_device etc.), so
+    # authority/plan/verify/outcome are N/A for this path.
     "intrusion": {
         "module": "intrusion.py",
         "contracts": {
@@ -138,33 +213,80 @@ _PATHS: dict[str, dict] = {
             # consumer reacts yet).
             "event": {"stage": "parity", "evidence": "publish_situation"},
         },
+        "na": {
+            "authority": "detection path — it observes and raises a situation, "
+                         "it does not actuate, so there is no authority decision",
+            "plan": "detection path — produces no actuation plan",
+            "verify": "nothing is actuated by this path, so there is nothing to "
+                      "verify",
+            "outcome": "nothing is actuated — no actuator outcome record",
+        },
     },
     # The in-home freeze hazard lifecycle (SafetyManager._check_freeze:
     # warning → critical → cleared) is mirrored into a kernel Situation
-    # (kind="hazard") and its agreement verified (D2), log-only parity. Adding
-    # this path honestly surfaces hazards as a tracked behaviour path — the only
-    # cell wired so far is situation, so it (slightly) dilutes the coverage %.
+    # (kind="hazard") and its agreement verified (D2), log-only parity. A
+    # detection path, same N/A shape as intrusion.
     "hazard": {
         "module": "hazard_situation.py",
         "contracts": {
             "situation": {"stage": "parity", "evidence": "_record_parity"},
             "event": {"stage": "parity", "evidence": "publish_situation"},
         },
+        "na": {
+            "authority": "detection path — observes a hazard, does not actuate",
+            "plan": "detection path — produces no actuation plan",
+            "verify": "nothing is actuated by this path — nothing to verify",
+            "outcome": "nothing is actuated — no actuator outcome record",
+        },
     },
     # The per-camera package delivery lifecycle (package_monitor: delivered →
     # removed) is mirrored into a kernel Situation (kind="delivery") and its
-    # agreement verified (D3), log-only parity. Another tracked behaviour path.
+    # agreement verified (D3), log-only parity. A detection path, same N/A shape.
     "delivery": {
         "module": "delivery_situation.py",
         "contracts": {
             "situation": {"stage": "parity", "evidence": "_record_parity"},
             "event": {"stage": "parity", "evidence": "publish_situation"},
         },
+        "na": {
+            "authority": "detection path — observes a delivery, does not actuate",
+            "plan": "detection path — produces no actuation plan",
+            "verify": "nothing is actuated by this path — nothing to verify",
+            "outcome": "nothing is actuated — no actuator outcome record",
+        },
     },
-    "goals": {"module": "goals.py", "contracts": {}},
-    "proactive": {"module": "proactive_audio.py", "contracts": {}},
-    "friday": {"module": "agent.py", "contracts": {}},
-    "homer": {"module": "agent.py", "contracts": {}},
+    # The four still-legacy actuation paths. Each acts on the home, so every
+    # actuation contract (event/world_model/authority/plan and, pending their
+    # shape, verify/outcome) is applicable and currently an un-wired gap — they
+    # are the biggest lever on the honest number. Only `situation` is N/A (an
+    # imperative action is not a situation lifecycle). verify/outcome are left as
+    # gaps, not pre-emptively N/A: whether a path has a deterministic end-state
+    # is decided when it is wired, and a conservative gap counts against us until
+    # then.
+    "goals": {
+        "module": "goals.py",
+        "contracts": {},
+        "na": {"situation": "goal-driven actuation is imperative, not a "
+                            "situation lifecycle"},
+    },
+    "proactive": {
+        "module": "proactive_audio.py",
+        "contracts": {},
+        "na": {"situation": "proactive actuation is imperative, not a situation "
+                            "lifecycle"},
+    },
+    "friday": {
+        "module": "agent.py",
+        "contracts": {},
+        "na": {"situation": "a persona actuation path is imperative, not a "
+                            "situation lifecycle"},
+    },
+    "homer": {
+        "module": "agent.py",
+        "contracts": {},
+        "na": {"situation": "a persona actuation path is imperative, not a "
+                            "situation lifecycle"},
+    },
 }
 
 
@@ -263,6 +385,56 @@ def strict_coverage_pct(rows: dict[str, dict] | None = None) -> float:
     return coverage_pct(rows, _STRICT_WEIGHT)
 
 
+def _is_na(path: str, contract: str) -> bool:
+    """True if ``contract`` is declared N/A-by-design for ``path``."""
+    return contract in _PATHS[path].get("na", {})
+
+
+def na_ledger() -> list[tuple[str, str, str]]:
+    """``(path, contract, reason)`` for every N/A-by-design cell, in matrix order.
+
+    Rendered into the doc so every exclusion from the applicable denominator is
+    visible and reviewable — the mechanism that stops "N/A" from becoming a place
+    to hide a real gap.
+    """
+    out: list[tuple[str, str, str]] = []
+    for path, spec in _PATHS.items():
+        na = spec.get("na", {})
+        for contract in _CONTRACTS:
+            if contract in na:
+                out.append((path, contract, na[contract]))
+    return out
+
+
+def applicable_cell_count() -> int:
+    """The honest denominator: cells that *can* be wired (total minus N/A)."""
+    na = sum(len(spec.get("na", {})) for spec in _PATHS.values())
+    return len(_PATHS) * len(_CONTRACTS) - na
+
+
+def applicable_coverage_pct(rows: dict[str, dict] | None = None) -> float:
+    """The headline figure: honest credit (shadow earns 0) over only the
+    *applicable* cells. N/A-by-design cells are excluded from both the numerator
+    and the denominator, so the number measures progress against what can
+    actually be wired — not diluted by cells that are structurally meaningless
+    (every one of which is listed, with its reason, in :func:`na_ledger`).
+    """
+    rows = rows or scan()
+    denom = applicable_cell_count()
+    got = sum(_STRICT_WEIGHT.get(stage, 0.0)
+              for path, contracts in rows.items()
+              for contract, stage in contracts.items()
+              if not _is_na(path, contract))
+    return round(100.0 * got / denom, 1) if denom else 0.0
+
+
+def _cell_glyph(path: str, contract: str, rows: dict[str, dict]) -> str:
+    """The matrix glyph for one cell: the N/A marker, else the stage icon."""
+    if _is_na(path, contract):
+        return _NA_ICON
+    return _ICON[rows[path][contract]]
+
+
 def drift() -> list[str]:
     """Problems: a declared non-``none`` cell whose evidence is absent from the
     path's source, an unknown contract name, or a missing module file."""
@@ -284,6 +456,18 @@ def drift() -> list[str]:
                     problems.append(
                         f"{path}.{contract}: declared '{cell['stage']}' but "
                         f"evidence {ev!r} not found in {spec['module']}")
+        # N/A declarations: a cell is wired or N/A, never both; every N/A needs a
+        # real reason — so "N/A" can't silently absorb an un-wired gap.
+        for contract, reason in spec.get("na", {}).items():
+            if contract not in _CONTRACTS:
+                problems.append(f"{path}: unknown N/A contract '{contract}'")
+            if contract in spec["contracts"]:
+                problems.append(
+                    f"{path}.{contract}: declared both wired and N/A — a cell is "
+                    "one or the other")
+            if not (isinstance(reason, str) and reason.strip()):
+                problems.append(
+                    f"{path}.{contract}: N/A needs a non-empty reason")
     return problems
 
 
@@ -293,15 +477,30 @@ def render_markdown(rows: dict[str, dict] | None = None) -> str:
     sep = "| --- " * (len(_CONTRACTS) + 1) + "|"
     lines = [header, sep]
     for path in _PATHS:
-        cells = " | ".join(f"{_ICON[rows[path][c]]}" for c in _CONTRACTS)
+        cells = " | ".join(_cell_glyph(path, c, rows) for c in _CONTRACTS)
         lines.append(f"| `{path}` | {cells} |")
     lines.append("")
-    lines.append(f"**Kernel coverage: {coverage_pct(rows)}%** weighted "
-                 "(· none ◐ shadow ◑ parity ● full)")
+    total = len(_PATHS) * len(_CONTRACTS)
+    applicable = applicable_cell_count()
+    lines.append(
+        f"**Kernel coverage (applicable): {applicable_coverage_pct(rows)}%** — "
+        f"honest credit (observe-only shadow earns 0; only parity + full count) "
+        f"over the {applicable} cells that can actually be wired. The "
+        f"{total - applicable} N/A-by-design cells (`{_NA_ICON}`, listed below) "
+        "are excluded, not scored as gaps. **This is the number to move.**")
     lines.append("")
-    lines.append(f"**Honest coverage: {strict_coverage_pct(rows)}%** — "
-                 "observe-only shadow cells excluded (they log, they govern "
-                 "nothing); only parity + full count. This is the number to move.")
+    lines.append(
+        f"Across all {total} cells (N/A counted as un-wired): "
+        f"{coverage_pct(rows)}% weighted / {strict_coverage_pct(rows)}% honest. "
+        f"Legend: `·` none  `◐` shadow  `◑` parity  `●` full  `{_NA_ICON}` n/a.")
+    lines.append("")
+    lines.append(
+        "**N/A-by-design cells** — excluded from the applicable denominator "
+        "because the contract is structurally meaningless for the path. Every "
+        "exclusion is listed with its reason so a real gap can't hide here:")
+    lines.append("")
+    for path, contract, reason in na_ledger():
+        lines.append(f"- `{path}` · **{contract}** — {reason}")
     return "\n".join(lines)
 
 
@@ -338,7 +537,7 @@ def render_table(rows: dict[str, dict] | None = None) -> str:
     width = max(len(p) for p in _PATHS)
     out = ["  " + "path".ljust(width) + "  " + " ".join(c[:4] for c in _CONTRACTS)]
     for path in _PATHS:
-        cells = " ".join(_ICON[rows[path][c]].center(4) for c in _CONTRACTS)
+        cells = " ".join(_cell_glyph(path, c, rows).center(4) for c in _CONTRACTS)
         out.append("  " + path.ljust(width) + "  " + cells)
     return "\n".join(out)
 
@@ -349,10 +548,14 @@ def main(argv: list[str]) -> int:
         print(render_markdown(rows))
     else:
         print("Behavioral kernel-coverage "
-              "(· none  ◐ shadow  ◑ parity  ● full)\n")
+              f"(· none  ◐ shadow  ◑ parity  ● full  {_NA_ICON} n/a)\n")
         print(render_table(rows))
-        print(f"\n  coverage: {coverage_pct(rows)}% of behaviour-bearing "
-              "path × contract cells are kernel-wired")
+        total = len(_PATHS) * len(_CONTRACTS)
+        print(f"\n  headline: {applicable_coverage_pct(rows)}% honest over the "
+              f"{applicable_cell_count()} applicable cells "
+              f"({total - applicable_cell_count()} of {total} are N/A by design)")
+        print(f"  all cells: {coverage_pct(rows)}% weighted / "
+              f"{strict_coverage_pct(rows)}% honest")
 
     if "--check" in argv:
         problems = drift() + doc_block_drift(rows)

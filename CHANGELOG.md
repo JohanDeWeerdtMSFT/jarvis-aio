@@ -1,3 +1,42 @@
+## [9.10.0] — Coverage metric reform: applicable-cell denominator + N/A ledger
+
+Groundwork for the agreed **80% target**, and a reporting-only change (zero
+runtime behaviour touched): the headline kernel-coverage figure now measures
+progress against *what can actually be wired*, not against a grid that includes
+cells no path could ever fill honestly.
+
+**The problem it fixes.** The old headline divided by all 84 path × contract
+cells. But ~30 of those cells are structurally meaningless — a one-shot device
+toggle is not a *situation*; a fire-and-forget bulk write has no single end-state
+to *verify*; a detection path (intrusion/hazard/delivery) observes and never
+actuates, so it has no *authority / plan / outcome*. Counting those as permanent
+"gaps" capped the all-cells honest number near ~60% forever and made "80%"
+undefinable.
+
+**What this lands:**
+- **Three cell states, not two.** Each path now declares, alongside its wired
+  `contracts`, an **`na`** map of contracts that are **N/A-by-design**, each with
+  a concrete reason. A cell is now *wired*, *N/A*, or an un-wired **gap**.
+- **Headline = honest credit over applicable cells.** `applicable_coverage_pct()`
+  excludes N/A cells from both numerator and denominator. Today: **28.4%** over
+  **54 applicable cells** (was 18.3% over all 84 — the same honest numerator, a
+  truthful denominator). The all-84 weighted/honest figures are kept underneath
+  for continuity.
+- **N/A can't become a hiding place.** Every exclusion is rendered into a
+  **ledger** in `KERNEL_COVERAGE.md` with its reason, and `--check` fails CI if
+  the ledger, matrix or figures drift from the generator. N/A is held to a
+  conservative bar — when in doubt a cell stays a gap (which *lowers* the number),
+  and `run_scene_or_script` / `set_mode` **authority** are deliberately left as
+  gaps, not N/A, because a scene can do anything a confirm-gate would guard.
+- **Drift gate hardened:** a cell declared both wired and N/A, or an N/A with an
+  empty reason, now fails `kernel_coverage.py --check`.
+- **Tests** cover the applicable denominator, the honest-numerator invariance, the
+  disjointness of wired/N/A, the ledger reasons, and the two new drift cases.
+- **No behaviour change.** No module under `custom_components/` is touched; this
+  is the measurement seam only. **Version** — manifest 9.9.0 → **9.10.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.9.0] — HAOS fail-safe: SQLite corruption self-heal (audit #5)
 
 The audit's #5 asked for HAOS lifecycle validation incl. **database recovery**.
