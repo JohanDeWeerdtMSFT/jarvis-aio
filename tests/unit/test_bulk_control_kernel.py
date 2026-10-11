@@ -34,6 +34,17 @@ def no_confirm(load, monkeypatch):
     return policy
 
 
+@pytest.fixture
+def authority_parity(load, monkeypatch):
+    """Spy on the log-only authority-parity record (MCU #4b)."""
+    ab = load("authority_bridge")
+    calls = []
+    monkeypatch.setattr(
+        ab, "record_control_parity",
+        lambda hass, d, s, **k: calls.append((d, s, k.get("allowed"), k.get("scope"))))
+    return calls
+
+
 async def test_bulk_turn_on_publishes_event_per_target(agent, fake_hass, no_confirm, published):
     fake_hass.states.set("light.a", "off")
     fake_hass.states.set("light.b", "off")
@@ -66,3 +77,28 @@ async def test_bulk_skips_protected_without_event(agent, fake_hass, load, monkey
     res = json.loads(out)
     assert res["count"] == 0 and res.get("blocked") == 2
     assert published == []   # protected devices never executed → no event
+
+
+# ── #4b: authority parity recorded per target (log-only, covers skipped too) ──
+async def test_authority_parity_recorded_for_executed_targets(
+        agent, fake_hass, no_confirm, published, authority_parity):
+    fake_hass.states.set("light.a", "off")
+    fake_hass.states.set("light.b", "off")
+    await agent._exec_bulk_control(fake_hass, {"domain": "light", "action": "turn_on"})
+    # one parity record per target, marked allowed (not held for confirmation)
+    assert len(authority_parity) == 2
+    assert all(c == ("light", "turn_on", True, s)
+               for c, s in zip(authority_parity, ("light.a", "light.b")))
+
+
+async def test_authority_parity_recorded_for_skipped_targets(
+        agent, fake_hass, load, monkeypatch, published, authority_parity):
+    policy = load("policy")
+    monkeypatch.setattr(policy, "requires_confirmation", lambda *a, **k: True)
+    fake_hass.states.set("lock.front", "unlocked")
+    fake_hass.states.set("lock.back", "unlocked")
+    await agent._exec_bulk_control(fake_hass, {"domain": "lock", "action": "lock"})
+    # the skipped (protected) targets are still measured — allowed=False
+    assert len(authority_parity) == 2
+    assert all(allowed is False for (_d, _s, allowed, _scope) in authority_parity)
+    assert published == []   # behaviour unchanged: nothing executed
