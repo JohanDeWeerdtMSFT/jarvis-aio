@@ -68,7 +68,7 @@ def test_drift_detects_a_bad_declaration(kc, monkeypatch):
 
 def test_markdown_lists_paths_and_coverage(kc):
     md = kc.render_markdown()
-    assert "control_device" in md and "Kernel coverage:" in md
+    assert "control_device" in md and "Kernel coverage" in md
     for contract in kc._CONTRACTS:
         assert contract in md
 
@@ -88,9 +88,11 @@ def test_strict_coverage_excludes_shadow(kc):
         assert strict < weighted
 
 
-def test_markdown_emits_both_figures(kc):
+def test_markdown_emits_headline_and_all_cell_figures(kc):
     md = kc.render_markdown()
-    assert "weighted" in md and "Honest coverage:" in md
+    # The headline is the applicable figure; the all-84 weighted/honest pair
+    # follows underneath for continuity.
+    assert "applicable" in md and "weighted" in md and "honest" in md
 
 
 def test_doc_block_in_sync_with_generator(kc):
@@ -138,3 +140,97 @@ def test_tool_map_names_parses_agent(kc):
     comp = kc._component_dir()
     names = kc._tool_map_names((comp / "agent.py").read_text())
     assert "control_device" in names and "get_entity_state" in names
+
+
+# ── applicable-cell denominator + N/A ledger (metric reform) ─────────────────
+
+def test_applicable_denominator_excludes_na(kc):
+    total = len(kc._PATHS) * len(kc._CONTRACTS)
+    na = len(kc.na_ledger())
+    # Every N/A cell is excluded from the applicable denominator, exactly once.
+    assert kc.applicable_cell_count() == total - na
+    assert 0 < kc.applicable_cell_count() < total  # some, not all, are N/A
+
+
+def test_applicable_coverage_is_the_honest_headline(kc):
+    applicable = kc.applicable_coverage_pct()
+    all_cells_honest = kc.strict_coverage_pct()
+    assert 0.0 <= applicable <= 100.0
+    # Same honest numerator over a smaller (applicable-only) denominator, so the
+    # headline is strictly higher than the all-84 honest figure while any N/A
+    # cell exists (one does today) — it is not diluted by meaningless cells.
+    assert kc.na_ledger()  # guard the premise
+    assert applicable > all_cells_honest
+
+
+def test_na_cells_do_not_change_the_numerator(kc):
+    # N/A cells are "none"-staged, so excluding them must leave the honest
+    # numerator untouched — the reform changes the denominator, never the credit.
+    denom = kc.applicable_cell_count()
+    rows = kc.scan()
+    got_applicable = sum(
+        kc._STRICT_WEIGHT[rows[p][c]]
+        for p in kc._PATHS for c in kc._CONTRACTS if not kc._is_na(p, c))
+    got_all = sum(kc._STRICT_WEIGHT[rows[p][c]]
+                  for p in kc._PATHS for c in kc._CONTRACTS)
+    assert got_applicable == got_all
+    assert kc.applicable_coverage_pct() == round(100.0 * got_all / denom, 1)
+
+
+def test_every_na_cell_has_a_reason_and_is_a_real_contract(kc):
+    for path, contract, reason in kc.na_ledger():
+        assert contract in kc._CONTRACTS
+        assert isinstance(reason, str) and reason.strip()
+
+
+def test_na_and_wired_are_disjoint(kc):
+    # A cell is wired XOR N/A — never declared as both.
+    for path, spec in kc._PATHS.items():
+        overlap = set(spec["contracts"]) & set(spec.get("na", {}))
+        assert overlap == set(), f"{path}: {overlap} declared both wired and N/A"
+
+
+def test_known_na_cells_are_present(kc):
+    # The structurally-meaningless cells the reform documents must be N/A.
+    assert kc._is_na("control_device", "situation")       # one-shot ≠ situation
+    assert kc._is_na("bulk_control", "verify")            # fire-and-forget
+    assert kc._is_na("intrusion", "authority")            # detection ≠ actuation
+    assert kc._is_na("set_mode", "world_model")           # no single entity
+    # ...and a genuine gap is NOT hidden as N/A: run_scene authority stays a gap.
+    assert not kc._is_na("run_scene_or_script", "authority")
+    assert not kc._is_na("goals", "plan")
+
+
+def test_drift_catches_a_cell_declared_both_wired_and_na(kc, monkeypatch):
+    bad = {k: dict(v) for k, v in kc._PATHS.items()}
+    bad["control_device"] = {
+        "module": "agent.py",
+        "contracts": {"plan": {"stage": "full", "evidence": "aexecute_plan"}},
+        "na": {"plan": "contradictory"},
+    }
+    monkeypatch.setattr(kc, "_PATHS", bad)
+    problems = kc.drift()
+    assert any("both wired and N/A" in p for p in problems)
+
+
+def test_drift_catches_an_empty_na_reason(kc, monkeypatch):
+    bad = {k: dict(v) for k, v in kc._PATHS.items()}
+    bad["goals"] = {"module": "goals.py", "contracts": {},
+                    "na": {"verify": "   "}}
+    monkeypatch.setattr(kc, "_PATHS", bad)
+    problems = kc.drift()
+    assert any("non-empty reason" in p for p in problems)
+
+
+def test_markdown_renders_na_glyph_and_ledger(kc):
+    md = kc.render_markdown()
+    assert kc._NA_ICON in md                      # the N/A glyph appears in the grid
+    assert "N/A-by-design" in md                  # the ledger header
+    # a specific ledger line with its reason is rendered
+    assert "`control_device` · **situation**" in md
+    assert "not a situation lifecycle" in md
+
+
+def test_doc_block_still_in_sync_after_reform(kc):
+    # The committed KERNEL_COVERAGE.md block (now incl. the ledger) matches.
+    assert kc.doc_block_drift() == []

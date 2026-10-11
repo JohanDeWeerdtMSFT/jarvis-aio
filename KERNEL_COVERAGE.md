@@ -15,46 +15,95 @@ This answers the sharper question the external MCU audit raised:
 A module can `from .kernel import authorize` and still have actuators that bypass
 Authority, so *reference* coverage overstates reality. This matrix tracks, per
 behaviour-bearing path, how far each pipeline contract is actually wired
-(`· none  ◐ shadow  ◑ parity  ● full`), and the script verifies every non-`none`
-claim against evidence that must exist in the path's source — the matrix cannot
-drift into fiction.
+(`· none  ◐ shadow  ◑ parity  ● full  – n/a`), and the script verifies every
+non-`none` claim against evidence that must exist in the path's source — the
+matrix cannot drift into fiction.
+
+**The headline is the honest *applicable-cell* figure.** Not every contract can
+exist for every path: a one-shot device toggle is not a situation, a
+fire-and-forget bulk write has no single end-state to verify, a detection path
+observes and never actuates. Those cells are declared **N/A-by-design** (`–`),
+excluded from the denominator, and listed one-by-one with their reason below, so
+the percentage measures progress against *what can actually be wired* instead of
+being permanently diluted. N/A is held to a conservative bar — when in doubt a
+cell stays an un-wired gap (`·`), which lowers the number — and because every
+exclusion is spelled out, a real gap cannot be quietly reclassified as N/A to
+flatter the figure. The all-84-cell figures (weighted and honest over the full
+grid) are kept underneath for continuity.
 
 ## Current matrix
 
 <!-- BEGIN kernel-coverage (python3 scripts/kernel_coverage.py --markdown) -->
 | Path | event | world_model | situation | authority | plan | verify | outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `control_device` | ◑ | ◑ | · | ◑ | ● | ● | ● |
-| `bulk_control` | ◑ | ◑ | · | ◑ | ◐ | · | · |
-| `execute_plan` | ◑ | · | · | ◑ | ● | · | · |
-| `run_scene_or_script` | ◑ | ◑ | · | · | ◐ | · | · |
-| `set_mode` | ◑ | · | · | · | ◐ | · | · |
-| `intrusion` | ◑ | · | ◑ | · | · | · | · |
-| `hazard` | ◑ | · | ◑ | · | · | · | · |
-| `delivery` | ◑ | · | ◑ | · | · | · | · |
-| `goals` | · | · | · | · | · | · | · |
-| `proactive` | · | · | · | · | · | · | · |
-| `friday` | · | · | · | · | · | · | · |
-| `homer` | · | · | · | · | · | · | · |
+| `control_device` | ◑ | ◑ | – | ◑ | ● | ● | ● |
+| `bulk_control` | ◑ | ◑ | – | ◑ | ◐ | – | – |
+| `execute_plan` | ◑ | · | – | ◑ | ● | – | – |
+| `run_scene_or_script` | ◑ | ◑ | – | · | ◐ | – | – |
+| `set_mode` | ◑ | – | – | · | ◐ | – | – |
+| `intrusion` | ◑ | · | ◑ | – | – | – | – |
+| `hazard` | ◑ | · | ◑ | – | – | – | – |
+| `delivery` | ◑ | · | ◑ | – | – | – | – |
+| `goals` | · | · | – | · | · | · | · |
+| `proactive` | · | · | – | · | · | · | · |
+| `friday` | · | · | – | · | · | · | · |
+| `homer` | · | · | – | · | · | · | · |
 
-**Kernel coverage: 19.4%** weighted (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage (applicable): 28.4%** — honest credit (observe-only shadow earns 0; only parity + full count) over the 54 cells that can actually be wired. The 30 N/A-by-design cells (`–`, listed below) are excluded, not scored as gaps. **This is the number to move.**
 
-**Honest coverage: 18.3%** — observe-only shadow cells excluded (they log, they govern nothing); only parity + full count. This is the number to move.
+Across all 84 cells (N/A counted as un-wired): 19.4% weighted / 18.3% honest. Legend: `·` none  `◐` shadow  `◑` parity  `●` full  `–` n/a.
+
+**N/A-by-design cells** — excluded from the applicable denominator because the contract is structurally meaningless for the path. Every exclusion is listed with its reason so a real gap can't hide here:
+
+- `control_device` · **situation** — a single imperative device actuation is not a situation lifecycle (no open/close state to model)
+- `bulk_control` · **situation** — imperative multi-device actuation, not a situation lifecycle
+- `bulk_control` · **verify** — fire-and-forget across many targets — no single expected end-state to read back
+- `bulk_control` · **outcome** — fire-and-forget — no per-device actuator outcome record
+- `execute_plan` · **situation** — an imperative multi-step plan is not a situation lifecycle
+- `execute_plan` · **verify** — arbitrary services per step — no single expected end-state to read back
+- `execute_plan` · **outcome** — arbitrary services — no single actuator outcome record
+- `run_scene_or_script` · **situation** — scene/script activation is imperative, not a situation lifecycle
+- `run_scene_or_script` · **verify** — a scene has no single deterministic end-state to read back
+- `run_scene_or_script` · **outcome** — no single expected end-state — no actuator outcome record
+- `set_mode` · **world_model** — the target is an abstract mode, not a single entity with pre/post state to snapshot
+- `set_mode` · **situation** — a mode directive is imperative, not a situation lifecycle
+- `set_mode` · **verify** — the mode's home effect is a scene — no single deterministic end-state to read back
+- `set_mode` · **outcome** — no single expected end-state — no actuator outcome record
+- `intrusion` · **authority** — detection path — it observes and raises a situation, it does not actuate, so there is no authority decision
+- `intrusion` · **plan** — detection path — produces no actuation plan
+- `intrusion` · **verify** — nothing is actuated by this path, so there is nothing to verify
+- `intrusion` · **outcome** — nothing is actuated — no actuator outcome record
+- `hazard` · **authority** — detection path — observes a hazard, does not actuate
+- `hazard` · **plan** — detection path — produces no actuation plan
+- `hazard` · **verify** — nothing is actuated by this path — nothing to verify
+- `hazard` · **outcome** — nothing is actuated — no actuator outcome record
+- `delivery` · **authority** — detection path — observes a delivery, does not actuate
+- `delivery` · **plan** — detection path — produces no actuation plan
+- `delivery` · **verify** — nothing is actuated by this path — nothing to verify
+- `delivery` · **outcome** — nothing is actuated — no actuator outcome record
+- `goals` · **situation** — goal-driven actuation is imperative, not a situation lifecycle
+- `proactive` · **situation** — proactive actuation is imperative, not a situation lifecycle
+- `friday` · **situation** — a persona actuation path is imperative, not a situation lifecycle
+- `homer` · **situation** — a persona actuation path is imperative, not a situation lifecycle
 <!-- END kernel-coverage -->
 
-**The honest figure above is the one to move** — most paths are still legacy,
+**The headline figure above is the one to move** — most paths are still legacy,
 exactly the state the audit flagged ("the kernel is not yet the operating system
-of JARVIS"). Both percentages are generated by `scripts/kernel_coverage.py` from
-the one matrix (weighted gives observe-only shadow ⅓ credit; honest gives it
-none), and `--check` fails CI if this file's embedded block drifts from the
-generator — so neither figure can be hand-edited or silently diverge again.
-It *dropped* from 8.9% at 8.34.0 on purpose: the new governance gate (below)
-surfaced two consequential tools that were acting on the home without being in
-this matrix at all — `run_scene_or_script` and `set_mode` — so they are now
-declared as the legacy paths they are. A lower, complete number beats a higher,
-partial one.
+of JARVIS"). Every percentage is generated by `scripts/kernel_coverage.py` from
+the one matrix (the headline is honest credit — observe-only shadow earns 0 — over
+only the *applicable* cells; the all-84 figures give shadow ⅓ / 0 credit over the
+full grid), and `--check` fails CI if this file's embedded block, figures or N/A
+ledger drift from the generator — so no figure can be hand-edited or silently
+diverge again. The all-84 honest number *dropped* from 8.9% at 8.34.0 on purpose:
+the governance gate (below) surfaced two consequential tools that were acting on
+the home without being in this matrix at all — `run_scene_or_script` and
+`set_mode` — so they are now declared as the legacy paths they are. A lower,
+complete number beats a higher, partial one.
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
+The agreed target is **80% of applicable cells** — the strangler-fig all but
+complete — reached one path at a time, each enforce flip a separate owner-gated
+decision.
 
 **Phase A (the third MCU audit's one actionable recommendation)** is complete
 for the `control_device` path: its pre-action read (`world_model` ◑), outcome
@@ -96,7 +145,8 @@ one release at a time.
   **Plan** at full (B4b): the actuation runs *through* the kernel planner
   (`aexecute_plan`) — a one-step plan whose run_step performs the awaited
   service call — so the planner owns execution. The farthest-along path: only
-  `situation` (by design) and the owner-gated `authority` enforce flip remain.
+  `situation` (n/a `–` by design — a one-shot toggle is not a situation) is
+  excluded, and the owner-gated `authority` enforce flip is all that remains.
 - **`intrusion`** — mirrors its lifecycle into the kernel **Situation** state
   machine at parity, and (D1) **verifies** the mirrored state agrees with the
   legacy intrusion verdict after every episode event (`_record_parity`,
@@ -136,22 +186,30 @@ one release at a time.
   handling. This is the step that lifts coverage back up (15.5% → 17.9%).
 - **`run_scene_or_script`** — the first Phase B adoption (B1): routed through the
   shared `actuation` envelope for its WorldModel context (`world_model` ◑),
-  actuation event (`event` ◑) and shadow plan (`plan` ◐). No deterministic
-  end-state, so no verify/outcome; no confirm-gate, so no authority cell.
+  actuation event (`event` ◑) and shadow plan (`plan` ◐). verify/outcome are
+  **n/a** (`–`, no deterministic end-state). `authority` is an un-wired **gap**
+  (`·`), *not* n/a — a scene/script can do anything a confirm-gate would guard, so
+  it is honestly counted as applicable-but-unwired.
 - **`set_mode`** (B2) — the mode directive records its change through the envelope
-  (`event` ◑, `plan` ◐). It is not a single-entity actuation (its home effect is
-  the applied mode scene), so there is no `world_model` entity context and no
-  verify/outcome; the actuation event's target is the mode name.
+  (`event` ◑, `plan` ◐). `world_model` and verify/outcome are **n/a** (`–`): the
+  target is an abstract mode, not a single entity with pre/post state. `authority`
+  is an un-wired **gap** (`·`) — a mode change applies scenes that can be
+  consequential — not n/a.
 - **`execute_plan`** (B4) — each step's execution routes through the kernel planner
-  (`aexecute_plan`, `plan` ●) and publishes an actuation event (`event` ◑); steps
-  are arbitrary services, so there is no single expected end-state (no
-  verify/outcome). Behaviour preserved: continue-on-failure, per-step results.
+  (`aexecute_plan`, `plan` ●) and publishes an actuation event (`event` ◑), each
+  run through the authority engine (`authority` ◑). Steps are arbitrary services,
+  so verify/outcome are **n/a** (`–`). `world_model` is an un-wired **gap** (`·`).
+  Behaviour preserved: continue-on-failure, per-step results.
 - **`bulk_control`** (B3) — recorded as one explicit N-step kernel `Plan` (shadow,
   `plan` ◐) with each executed target routed through the envelope (`world_model`
-  ◑, `event` ◑). Fire-and-forget, so no per-device verify/outcome; protected
-  devices are still skipped.
-- **`goals` / `proactive` / `friday` / `homer`** — not yet wired to any kernel
-  contract.
+  ◑, `event` ◑, `authority` ◑). Fire-and-forget, so per-device verify/outcome are
+  **n/a** (`–`); protected devices are still skipped.
+- **`goals` / `proactive` / `friday` / `homer`** — the four still-legacy actuation
+  paths, not yet wired to any kernel contract. Every actuation contract
+  (event/world_model/authority/plan, and verify/outcome pending each path's shape)
+  is an applicable **gap** (`·`) counting against the number; only `situation` is
+  n/a (`–`, an imperative action is not a situation lifecycle). These are the
+  biggest remaining lever on the headline figure.
 
 > **Actuator contract (8.26.0 → 8.31.0):** `control_device` constructs a
 > canonical `kernel.actuator.ActuatorRequest` (who/intent/target/correlation/
