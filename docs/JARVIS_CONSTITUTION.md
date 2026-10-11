@@ -101,7 +101,7 @@ would otherwise allow the action. Derived (child) tokens never outlive their par
 | `long_horizon` | ● enforce |
 | `loop_detect` | ● enforce |
 | `optimize` | ◑ parity |
-| `outcome` | ◐ shadow |
+| `outcome` | ● enforce |
 | `persistence` | · pure |
 | `plan` | ◑ parity |
 | `priority` | · pure |
@@ -115,7 +115,7 @@ would otherwise allow the action. Derived (child) tokens never outlive their par
 | `space_time` | ● enforce |
 | `surfaces` | · pure |
 | `temporal` | ◐ shadow |
-| `token_telemetry` | ◐ shadow |
+| `token_telemetry` | ● enforce |
 | `uncertainty` | ◑ parity |
 | `working_memory` | ● enforce |
 | `world_model` | ● enforce |

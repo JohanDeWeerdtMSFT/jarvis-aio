@@ -730,7 +730,7 @@ async def ws_get_panel_data(
                 "bedrooms":          len(bedroom_areas),
                 "areas_monitored":   len(areas_list),
                 "announcements_today": announcements_today,
-                "est_cost":          "—",
+                "est_cost":          _telemetry_est_cost(),
                 "uptime":            uptime_str,
             },
             "dominant":       dominant,
@@ -940,6 +940,21 @@ def _format_uptime(seconds: float) -> str:
     if m > 0:
         return f"{m}m {s}s"
     return f"{s}s"
+
+
+def _telemetry_est_cost() -> str:
+    """Session LLM spend estimate for the status panel, or the "—" placeholder.
+
+    Thin delegate to ``llm_provider.telemetry_est_cost`` (TC4 enforce), which
+    owns the kernel ``summarize`` read, the enforce kill-switch and the fail-safe
+    formatting. Wrapped once more here so the panel never raises.
+    """
+    try:
+        from . import llm_provider
+
+        return llm_provider.telemetry_est_cost()
+    except Exception:  # noqa: BLE001 - observe-only panel figure, never fatal
+        return "—"
 
 
 def _get_announcements_today() -> int:

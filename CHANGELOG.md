@@ -1,3 +1,98 @@
+## [9.3.0] — Post-Ω evergreen: `provenance` shadow coverage → the situation domain
+
+The third increment of the #237 trio. Unlike the other two, `provenance` has no
+honest *rung* to climb yet: the knowledge store is `UNIQUE(subject, key)` (one
+record per key, so a selection-divergence parity there is tautological), and the
+only live multi-source surface — presence — is already adjudicated by the
+`conflict` primitive at parity, so a provenance parity there would duplicate it.
+What it can honestly do now is broaden its live *coverage*, the plan's stated
+"world-model / situation attach" step.
+
+**What this lands:**
+- **`provenance` shadow coverage extends to the situation domain.** When
+  `continuity._live_situations()` reads the open kernel situations for its
+  continuity view, it now also packages each as a `kernel.provenance.Provenance`
+  (value `"kind:subject"`, source the situation kind, observed-at the situation's
+  `updated_ts`, durable) and logs the most authoritative one via
+  `select_authoritative`. Observe-only — nothing consumes it, and
+  `_live_situations()` returns the same rows whether it runs or not.
+- This joins the existing provenance shadow surfaces — curated knowledge
+  (`knowledge.all_facts`) and recent recognitions (`recognition.who_is_where`) —
+  so the fabric now attributes *where did this come from* across facts, faces and
+  situations. Kill-switch: `PROVENANCE_SHADOW` in `continuity.py`.
+- **Stays at shadow, deliberately.** A genuine parity/enforce for `provenance`
+  remains deferred until a new multi-source surface exists whose authoritative
+  selection isn't already the `conflict` primitive's job — documented in the
+  adoption matrix rather than faked.
+- **Adoption matrix:** `provenance` gains `continuity` as a live owner (stage
+  unchanged at shadow); Constitution ledger regenerated.
+- **Version** — manifest 9.2.0 → **9.3.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
+## [9.2.0] — Post-Ω evergreen: `outcome` → enforce (owner-authorized M loop)
+
+The second evergreen increment of the #237 trio. `outcome` is a *measurement*
+primitive — one actuation yields one structured `Outcome` from a single
+verification verdict — so it has no honest agreement-parity (the value would be
+compared against itself). Its real enforce is Phase M authoritatively consuming
+those structured outcomes, which the owner has now authorized.
+
+**What this lands:**
+- **`outcome` → enforce.** The `learning_enforce` flip defaults **ON**
+  (`actuation.LEARNING_ENFORCE = True`): Phase M folds each verified actuation's
+  structured `kernel.outcome.Outcome` into the capability's **persisted** trust
+  (`capability_trust.json`) and feeds it back as the next learning prior — the
+  learning loop is closed, trust accumulates across restarts instead of resetting
+  to the neutral 0.5 each tick. M reads the structured records, never raw logs.
+- **Kill-switch + fail-safe.** `LEARNING_ENFORCE` / the `learning_enforce` config
+  key reverts to the neutral-prior behaviour (store never written); any error
+  falls back to the neutral prior and persists nothing. The gate was converted to
+  the owner-authorized-ON pattern (module flag is master; the config key turns it
+  off), matching the other enforce flips.
+- **No outward behaviour change today.** `learned_trust(cap)` is read only inside
+  the learning loop itself — nothing yet consumes it to gate an actuation or an
+  autonomy grant — so closing the loop persists learning state without altering
+  any decision. Wiring a consumer (e.g. graduated autonomy reading the trust) is
+  a separate, later step.
+- **Adoption matrix:** `outcome` shadow → enforce; Constitution ledger regenerated.
+- **Version** — manifest 9.1.0 → **9.2.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
+## [9.1.0] — Post-Ω evergreen: `token_telemetry` → enforce (TC4)
+
+The first evergreen increment after the Ω capstone, closing one of the three
+`token_telemetry` / `outcome` / `provenance` rungs left open in #237. Honest and
+kill-switched, under the same discipline — Phase Ω has no exit, capability folds
+in forever on the ladder.
+
+**What this lands:**
+- **`token_telemetry` → enforce.** The status panel's `est_cost` read a literal
+  `"—"` placeholder; it now renders the **actual measured** session spend. There
+  is no independent legacy estimate to run a TC3 agreement-parity against, and a
+  measured `UsageRecord` *is* the ground truth for a pure measurement primitive,
+  so this advances shadow → enforce directly (TC3 collapses as N/A, documented in
+  the adoption matrix rather than faked).
+- **`kernel/token_telemetry.py`** — adds `default_price_book()`: a conservative,
+  operator-overridable estimate of per-1M-token rates across the model families
+  JARVIS routes (OpenAI, Anthropic, Gemini, Groq/Llama), most-specific key first,
+  no default so an unknown model contributes `0` and the total stays a lower bound.
+- **`llm_provider.py`** — each call's `UsageRecord` is now **priced** (via the
+  default book) and retained in a bounded, session-scoped ring; `usage_records()`,
+  `telemetry_enforce_enabled()` and `telemetry_est_cost()` expose the summed figure.
+- **`websocket.py`** — the panel's `est_cost` delegates to `telemetry_est_cost()`.
+- **Fail-safe + kill-switch.** Any fault, no calls yet, an unpriced-only total, or
+  `TOKEN_TELEMETRY_ENFORCE` / the `token_telemetry_enforce` config key being off
+  all revert the panel to the `"—"` placeholder — the panel never regresses or
+  implies a misleading free `"$0.0000"`. Owner-authorized ON by default.
+- **Scope.** The *other* `token_telemetry` consumer — Phase Y reading telemetry to
+  tune model spend — remains separate and unshipped. `outcome` and `provenance`
+  (their parity rungs) are tracked next in #237.
+- **Version** — manifest 9.0.0 → **9.1.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.0.0] — Phase Ω — Continuous Evolution: the MCU architecture is complete
 
 The capstone. JARVIS crosses from *building* the kernel spine to *evolving* on a

@@ -23,6 +23,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Any, Optional
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,17 +33,93 @@ _LOGGER = logging.getLogger(__name__)
 # Shadow only — it never changes a response or raises into a call.
 TOKEN_TELEMETRY_SHADOW = True
 
+# Phase TC4 (enforce): the status panel reads the real measured usage below
+# instead of a placeholder guess. There is no independent legacy estimate to run
+# a TC3 agreement-parity against (the panel showed a literal "—"), and the record
+# *is* the ground truth for a pure measurement primitive, so this advances
+# shadow → enforce directly. Additive and fail-safe: the panel reverts to "—" if
+# this is off or anything faults. Owner-authorized ON by default; kill-switch
+# back to the placeholder: TOKEN_TELEMETRY_ENFORCE / the `token_telemetry_enforce`
+# config key.
+TOKEN_TELEMETRY_ENFORCE = True
+
+# Session-scoped ring of measured UsageRecords (cleared on restart, like the
+# panel's uptime / announcements-today figures). Bounded so a long-running home
+# can't grow it without limit; the panel summarizes a snapshot of it.
+_USAGE_RECORDS: "deque" = deque(maxlen=2000)
+_PRICES = None  # lazily built default_price_book(), reused across calls
+
+
+def _price_book():
+    """The default (operator-overridable) price book, built once and reused."""
+    global _PRICES
+    if _PRICES is None:
+        from .kernel import token_telemetry as _tt
+        _PRICES = _tt.default_price_book()
+    return _PRICES
+
+
+def usage_records() -> tuple:
+    """Snapshot of the measured per-call usage records (newest last).
+
+    A tuple copy so a reader (the status panel) never trips over concurrent
+    appends from a provider call.
+    """
+    return tuple(_USAGE_RECORDS)
+
+
+def telemetry_enforce_enabled() -> bool:
+    """Whether the panel may read measured telemetry (TC4 enforce, kill-switched)."""
+    if not TOKEN_TELEMETRY_ENFORCE:
+        return False
+    try:
+        from . import jarvis_config
+        if jarvis_config.get("token_telemetry_enforce", True) is False:
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def telemetry_est_cost() -> str:
+    """Formatted session LLM spend estimate for the status panel, or "—".
+
+    TC4 enforce: sums the retained, priced :class:`UsageRecord`s through the
+    kernel's pure ``summarize`` and formats the total. Fail-safe — the enforce
+    kill-switch being off, any fault, no calls yet, or an unpriced-only total
+    (cost ``0``) all yield the "—" placeholder the panel showed before, so the
+    figure never regresses the panel or implies a misleading free "$0.0000".
+    Cost is an estimate from an operator-overridable price book; unknown models
+    contribute ``0``, so it is a conservative lower bound.
+    """
+    try:
+        if not telemetry_enforce_enabled():
+            return "—"
+        records = usage_records()
+        if not records:
+            return "—"
+        from .kernel import token_telemetry as _tt
+
+        totals = _tt.summarize(records)
+        if totals.calls <= 0 or totals.estimated_cost_usd <= 0:
+            return "—"
+        return f"${totals.estimated_cost_usd:.4f}"
+    except Exception:  # noqa: BLE001 - observe-only panel figure, never fatal
+        return "—"
+
 
 def _record_usage_shadow(resp: Any, provider_name: str, model: str) -> None:
-    """Emit a kernel ``token_telemetry.UsageRecord`` from a provider response.
+    """Record a kernel ``token_telemetry.UsageRecord`` from a provider response.
 
     Reads the actual input / output / cached token counts off the provider's
     usage object — defensively across OpenAI/Groq (``prompt_tokens`` /
     ``completion_tokens`` / ``prompt_tokens_details.cached_tokens``), Anthropic
     (``input_tokens`` / ``output_tokens`` / ``cache_read_input_tokens``) and
-    Gemini (``usage_metadata.*_token_count``) shapes — and records them. Purely
-    observational (TC2): nothing consumes the record yet. Kill-switched via
-    :data:`TOKEN_TELEMETRY_SHADOW`; never raises into the caller.
+    Gemini (``usage_metadata.*_token_count``) shapes — prices them against the
+    default price book, and retains the record in the bounded session ring that
+    the status panel summarizes (TC4). Still observe-only on the call path: it
+    never changes a response. Kill-switched via :data:`TOKEN_TELEMETRY_SHADOW`;
+    never raises into the caller.
     """
     if not TOKEN_TELEMETRY_SHADOW:
         return
@@ -81,8 +158,10 @@ def _record_usage_shadow(resp: Any, provider_name: str, model: str) -> None:
             input_tokens=inp,
             output_tokens=out,
             cached_tokens=cached,
+            prices=_price_book(),
         )
-        _LOGGER.debug("token telemetry (shadow): %s", rec.to_dict())
+        _USAGE_RECORDS.append(rec)
+        _LOGGER.debug("token telemetry: %s", rec.to_dict())
     except Exception:  # pragma: no cover - observe-only, must never disrupt a call
         pass
 

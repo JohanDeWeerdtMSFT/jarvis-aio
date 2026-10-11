@@ -243,19 +243,31 @@ _DECLARED: dict[str, dict] = {
     # token_telemetry: cognitive token & cost telemetry (cross-cutting
     # observability, feeds Phase Y). A UsageRecord captures a call's actual
     # input/output/cached tokens by tier + model, a PriceBook estimates cost,
-    # and summarize/by_tier/by_model roll it up. SHADOW (TC2): llm_provider emits
-    # a UsageRecord per call from each provider's own usage fields, observe-only
-    # (kill-switch TOKEN_TELEMETRY_SHADOW); nothing consumes it yet. Parity vs
-    # current estimates, enforce when the panel + Phase Y read it.
-    "token_telemetry": {"stage": "shadow", "owners": ["llm_provider"]},
+    # and summarize/by_tier/by_model roll it up. ENFORCE (TC4): llm_provider
+    # records a priced UsageRecord per call (default_price_book) into a bounded
+    # session ring and sums it through kernel.summarize in telemetry_est_cost(),
+    # which the status panel renders where it previously showed a literal "—".
+    # There is no independent legacy estimate to run a TC3 agreement-parity
+    # against, and the record *is* the ground truth for a pure measurement
+    # primitive, so this advances shadow → enforce directly. Additive + fail-safe:
+    # the figure reverts to "—" if TOKEN_TELEMETRY_ENFORCE / the
+    # `token_telemetry_enforce` config key is off or anything faults. (Phase Y
+    # reading telemetry is a separate consumer.)
+    "token_telemetry": {"stage": "enforce", "owners": ["llm_provider"]},
     # outcome: canonical outcome model (Epistemic Fabric, pre-Phase M). A
     # structured Outcome (intended/observed/success/confidence/deviation/cause/
     # side_effects/feedback) with a distilled learning_signal in [-1,1], so M
-    # reads structure rather than re-reading logs. SHADOW (#237): actuation.
-    # outcome() emits a kernel.outcome.Outcome (via from_verification) alongside
-    # the canonical ActuatorOutcome on every verified actuation — log-only,
-    # nothing reads it yet. Parity vs current feedback next, enforce when M reads.
-    "outcome":      {"stage": "shadow",  "owners": ["actuation"]},
+    # reads structure rather than re-reading logs. ENFORCE (#237, 9.2.0): with the
+    # owner-authorized learning_enforce flip ON, Phase M authoritatively consumes
+    # the structured Outcome records — the per-capability trust it derives is now
+    # PERSISTED (capability_trust.json) and fed back as the next prior, closing the
+    # learning loop. A measurement primitive (one actuation → one Outcome from a
+    # single verification verdict), so there is no independent agreement-parity to
+    # earn — shadow → enforce directly, the owner's call. Kill-switch back to the
+    # neutral-prior fail-safe: LEARNING_ENFORCE / the `learning_enforce` config key.
+    # (No consumer reads the persisted trust to gate actuation/autonomy yet, so the
+    # loop closes without changing any outward decision today.)
+    "outcome":      {"stage": "enforce", "owners": ["actuation"]},
     # provenance: where a piece of state came from (Epistemic Fabric, audit-
     # added). A Provenance pairs a value with source / observed-at / confidence /
     # model / corroboration / expiry; select_authoritative picks the freshest
@@ -266,9 +278,16 @@ _DECLARED: dict[str, dict] = {
     # packages each recent face recognition it returns (value=name / source=camera /
     # confidence / observed-at / cache-window expiry), logging the authoritative
     # fresh sighting via select_authoritative — observe-only, nothing consumes it
-    # yet (WorldModel.provenances() exposes the same view). Parity vs current reads
-    # next, enforce when a consumer reads it authoritatively.
-    "provenance":   {"stage": "shadow",  "owners": ["knowledge", "recognition"]},
+    # yet (WorldModel.provenances() exposes the same view). SHADOW coverage now
+    # also spans the *situation* domain (9.3.0, the "world-model / situation
+    # attach" step): continuity._live_situations() packages each open situation as
+    # a Provenance (value="kind:subject", source=the kind, observed-at=updated_ts)
+    # and logs the authoritative one. Still observe-only. A genuine divergence-
+    # parity stays deferred: the knowledge store is UNIQUE(subject,key) (one record
+    # per key, so a selection parity there is tautological) and the live multi-
+    # source surface, presence, is already adjudicated by the conflict primitive at
+    # parity — so provenance climbs further only on a new multi-source surface.
+    "provenance":   {"stage": "shadow",  "owners": ["knowledge", "recognition", "continuity"]},
     # uncertainty: first-class "what do I know vs think vs guess" (Epistemic
     # Fabric, audit-added). An Uncertain pairs a value with a confidence, a band
     # (known/believed/guessed/unknown), its basis and what evidence would

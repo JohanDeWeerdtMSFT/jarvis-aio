@@ -420,17 +420,20 @@ def _emit_learning_parity(oc) -> None:
         pass
 
 
-# ENFORCE (Phase M — Learning & Adaptation, owner-gated): close the loop. The
-# per-capability trust the shadow/parity only *logged* is now PERSISTED and fed
-# back as the prior for the next adjustment, so trust accumulates across restarts
-# instead of resetting to the neutral 0.5 each tick. `learned_trust(cap)` exposes
-# the stored value for downstream consumers (e.g. graduated autonomy). Kill-
-# switched, default OFF (LEARNING_ENFORCE / the `learning_enforce` config key) so
-# shipping is behaviour-preserving — the prior stays 0.5 and the store is never
-# written; fail-safe — any error falls back to the neutral prior and persists
-# nothing. Stored to <config>/jarvis/capability_trust.json (house JSON-snapshot
-# pattern), loaded once, saved throttled.
-LEARNING_ENFORCE = False
+# ENFORCE (Phase M — Learning & Adaptation): close the loop. The per-capability
+# trust the shadow/parity only *logged* is now PERSISTED and fed back as the prior
+# for the next adjustment, so trust accumulates across restarts instead of
+# resetting to the neutral 0.5 each tick — M authoritatively consumes the
+# structured kernel.outcome records (never re-reads raw logs). `learned_trust(cap)`
+# exposes the stored value for downstream consumers (e.g. graduated autonomy, not
+# yet wired — so this closes the learning loop without changing any actuation or
+# autonomy decision today). Owner-authorized ON (9.2.0, #237); kill-switch back to
+# the neutral-prior fail-safe: LEARNING_ENFORCE / the `learning_enforce` config
+# key — set either off and the prior stays 0.5 and the store is never written;
+# fail-safe — any error falls back to the neutral prior and persists nothing.
+# Stored to <config>/jarvis/capability_trust.json (house JSON-snapshot pattern),
+# loaded once, saved throttled.
+LEARNING_ENFORCE = True
 _LEARN_STORE: Dict[str, float] = {}
 _LEARN_STORE_LOADED = False
 _LEARN_STORE_PATH: Optional[str] = None
@@ -439,15 +442,18 @@ _LEARN_SAVE_THROTTLE = 60.0        # seconds; outcome() is not hot, but don't th
 
 
 def _learning_enforce_on() -> bool:
-    """True when the learning enforce flip is active (module flag or the
-    `learning_enforce` config key). Never raises."""
-    if LEARNING_ENFORCE:
-        return True
+    """True when the learning enforce flip is active. Owner-authorized ON by
+    default (9.2.0); the `learning_enforce` config key is the kill-switch back to
+    the neutral-prior fail-safe. Never raises."""
+    if not LEARNING_ENFORCE:
+        return False
     try:
         from . import jarvis_config
-        return bool(jarvis_config.get("learning_enforce", False))
+        if jarvis_config.get("learning_enforce", True) is False:
+            return False
     except Exception:
-        return False
+        pass
+    return True
 
 
 def learned_trust(cap: str) -> float:

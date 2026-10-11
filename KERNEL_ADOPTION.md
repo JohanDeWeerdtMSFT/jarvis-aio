@@ -81,12 +81,12 @@ explicit per-flip owner go/no-go.
 | `long_horizon` | ● enforce | `continuity` |
 | `loop_detect` | ● enforce | `actuation` |
 | `optimize` | ◑ parity | `decision_record` |
-| `outcome` | ◐ shadow | `actuation` |
+| `outcome` | ● enforce | `actuation` |
 | `persistence` | · pure | — |
 | `plan` | ◑ parity | `actuation`, `agent`, `goals` |
 | `priority` | · pure | — *(staged ahead)* |
 | `privacy` | · pure | — *(staged ahead)* |
-| `provenance` | ◐ shadow | `knowledge`, `presence`, `recognition` |
+| `provenance` | ◐ shadow | `continuity`, `knowledge`, `presence`, `recognition` |
 | `resilience` | ◐ shadow | `connectivity` |
 | `router` | ◐ shadow | `reasoning_loop` |
 | `self_model` | ● enforce | `agent` |
@@ -95,7 +95,7 @@ explicit per-flip owner go/no-go.
 | `space_time` | ● enforce | `cognitive_core`, `proactive_audio` |
 | `surfaces` | · pure | — *(staged ahead)* |
 | `temporal` | ◐ shadow | `agent`, `knowledge` |
-| `token_telemetry` | ◐ shadow | `llm_provider` |
+| `token_telemetry` | ● enforce | `llm_provider` |
 | `uncertainty` | ◑ parity | `identity`, `knowledge` |
 | `working_memory` | ● enforce | `cognitive_core`, `output_gate` |
 | `world_model` | ● enforce | `actuation`, `agent`, `cognitive_core`, `continuity`, `home_state`, `presence`, `proactive_briefing` |
