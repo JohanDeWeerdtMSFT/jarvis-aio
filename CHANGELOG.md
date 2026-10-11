@@ -1,3 +1,35 @@
+## [9.14.0] — Surface the authority-enforce parity tally (enforce-flip Step A)
+
+Groundwork for widening the kernel authority-engine enforce allowlist, and a
+**read-only** change — it surfaces data, it changes no behaviour.
+
+Authority enforcement is already live but deliberately narrow: the kernel engine
+is authoritative (via a max-restriction belt — it can only *tighten* the legacy
+confirm-gate, never loosen it, and fails safe on any engine fault) for just a
+7-capability security allowlist (alarm arm/disarm, lock unlock/open, cover open).
+For every other capability it's pure **log-only parity**. Widening that allowlist
+is the next behaviour-changing, owner-gated step — and the design gates it on the
+engine already *agreeing* with the live gate on real traffic.
+
+That agreement was being tracked (`authority_bridge.parity_summary`) but surfaced
+nowhere. This adds it to the **config-entry diagnostics** (the "Download
+diagnostics" dump):
+
+- `authority_parity.enforce_on` — the live `AUTHORITY_ENFORCE` kill-switch state.
+- `authority_parity.enforced_capabilities` — the current allowlist.
+- `authority_parity.tally` — per-capability `[agree, disagree]` counts, the overall
+  agreement rate, and recent mismatches (engine vs. gate, with reasons).
+
+So "which capabilities does the engine already agree on?" is answerable from the
+downloaded diagnostics instead of only the logs — the data that grounds the
+allowlist-widening decision (Step B), rather than widening blind.
+
+- Read-only; `parity_summary` is run through the same credential redactor as the
+  rest of the dump. No coverage-matrix or runtime-behaviour change.
+- **Tests:** the diagnostics dump now carries the `authority_parity` block with
+  the enforce state, allowlist, and per-capability tally.
+- **Version** — manifest 9.13.0 → **9.14.0**.
+
 ## [9.13.0] — `goals` onto the kernel spine #1 (coverage 28.4% → 29.6%)
 
 First increment of the agreed 80%-of-applicable push, and a safe one: additive,

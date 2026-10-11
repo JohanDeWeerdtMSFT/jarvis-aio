@@ -98,3 +98,38 @@ async def test_diagnostics_entry_point_redacts_and_returns_dict(diag):
 def test_diagnostics_exports_entry_point(diag):
     assert hasattr(diag, "async_get_config_entry_diagnostics")
     assert "async_get_config_entry_diagnostics" in diag.__all__
+
+
+# ── authority-enforce rollout data (Step A of the allowlist-widening flip) ──────
+
+class _AuthHass:
+    """Minimal hass with a .data dict so the authority parity tally can be read."""
+    def __init__(self):
+        self.data = {}
+    class _States:
+        def async_all(self):
+            return []
+    states = _States()
+    async def async_add_executor_job(self, fn, *a):
+        return fn(*a)
+
+
+async def test_diagnostics_surfaces_authority_parity(diag, load):
+    # `load` registers the synthetic `jc` package so the diag function's
+    # `from .. import authority_bridge` resolves; seed one engine-vs-gate record.
+    ab = load("authority_bridge")
+    hass = _AuthHass()
+    ab.record_control_parity(hass, "lock", "unlock", allowed=True)
+
+    class _Entry:
+        version = 1
+        data = {}
+        options = {}
+
+    out = await diag.async_get_config_entry_diagnostics(hass, _Entry())
+    ap = out.get("authority_parity")
+    assert ap, out.get("authority_parity_error")
+    assert ap["enforce_on"] is True                     # mirrors AUTHORITY_ENFORCE
+    assert "lock.unlock" in ap["enforced_capabilities"]  # the allowlist is surfaced
+    # the per-capability tally (what gates widening) is present
+    assert "by_capability" in ap["tally"] and "agreement_rate" in ap["tally"]
