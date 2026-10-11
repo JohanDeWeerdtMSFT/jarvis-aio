@@ -22,9 +22,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 _LOGGER = logging.getLogger(__name__)
+
+# Ollama model-tag syntax (e.g. gemma4:26b, llama3.3:70b-instruct). Mirrors
+# llm_provider._OLLAMA_TAG_RE; kept local so this diagnostics check doesn't have
+# to import the heavy provider module. A colon-tagged model means the route is
+# Ollama even if the provider field says a cloud name (a common mis-set), so the
+# health check can resolve the same default base URL the provider factory uses.
+_OLLAMA_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$", re.I)
 
 _OK = "ok"          # verified working (probe succeeded OR real use succeeded)
 _IDLE = "idle"      # reachable but not recently exercised, or a synthetic poke
@@ -115,7 +123,8 @@ def _cfg(key: str, default=None):
 async def _check_llm(hass) -> dict:
     out = {"name": "LLM", "key": "llm", "status": _OFF, "detail": ""}
     base = str(_cfg("llm_base_url", "") or "").strip()
-    provider = str(_cfg("llm_provider", "") or _cfg("provider", "") or "").strip()
+    provider = str(_cfg("llm_provider", "") or _cfg("provider", "") or "").strip().lower()
+    model = str(_cfg("model", "") or "").strip()
 
     breaker = None
     try:
@@ -124,11 +133,10 @@ async def _check_llm(hass) -> dict:
     except Exception:
         pass
 
-    if not base and provider in ("", "ollama"):
-        out["detail"] = "no LLM base URL configured"
-        return out
-
-    # A real agent/conversation call that failed is authoritative → DOWN.
+    # Real use is the most authoritative signal there is — consult it BEFORE any
+    # "not configured" guess. The agent records a success every time it
+    # round-trips (e.g. answering the very message asking why the LLM shows off),
+    # and a real failure here is the only thing that legitimately means DOWN.
     real_fail = _recent_real_failure("llm")
     if real_fail:
         out["status"] = _DOWN
@@ -136,23 +144,42 @@ async def _check_llm(hass) -> dict:
         if breaker:
             out["breaker"] = breaker.get("state")
         return out
+    if _recently_used_ok("llm"):
+        out["status"] = _OK
+        out["detail"] = f"{provider or 'LLM'} — recent agent call succeeded"
+        if breaker:
+            out["breaker"] = breaker.get("state")
+        return out
+
+    # Resolve the base URL the SAME way the provider factory does: an 'ollama'
+    # provider — or a colon-tagged local model mis-set against a cloud provider —
+    # with a blank URL runs against the standard local Ollama address, not
+    # nothing. Without this the check reported "no LLM base URL configured" for a
+    # perfectly working default-address Ollama install.
+    routes_to_ollama = provider == "ollama" or bool(
+        model and _OLLAMA_TAG_RE.match(model))
+    if not base and routes_to_ollama:
+        try:
+            from ..const import DEFAULT_OLLAMA_BASE_URL
+            base = DEFAULT_OLLAMA_BASE_URL
+        except Exception:
+            base = "http://homeassistant.local:11434/v1"
+
+    if not base and not provider:
+        out["detail"] = "no LLM provider configured"
+        return out
 
     if base:
         ok, detail = await _ping_ollama(hass, base)
         if not ok:
-            # retry once — a momentary miss shouldn't alarm if usage is fine
+            # retry once — a momentary miss shouldn't alarm
             await asyncio.sleep(1.0)
             ok, detail = await _ping_ollama(hass, base)
-        if ok:
-            out["status"] = _OK
-        elif _recently_used_ok("llm"):
-            out["status"] = _OK
-            detail = "working (recent agent call succeeded; ping missed)"
-        else:
-            out["status"] = _IDLE
+        out["status"] = _OK if ok else _IDLE
         out["detail"] = detail
         out["base"] = _redact(base)
     else:
+        # A cloud provider with a canonical endpoint — no base URL needed.
         if breaker and breaker.get("state") == "OPEN":
             out["status"] = _WARN
             out["detail"] = f"{provider or 'cloud'} provider — breaker OPEN (recent failures)"
@@ -214,10 +241,16 @@ async def _check_embeddings(hass) -> dict:
             out["status"] = _OK
             out["detail"] = "working (recent embedding succeeded; model idle for the health poke)"
         else:
+            # Not reachable and not used recently. Surface the probe's own reason
+            # (e.g. "is the embed model pulled? Try: ollama pull …") rather than a
+            # generic message — the user opted into semantic search, so tell them
+            # exactly what to fix. Still IDLE (calm), not a red failure: search
+            # falls back to keyword until the embed model is available.
+            reason = (res or {}).get("error") if isinstance(res, dict) else None
             out["status"] = _IDLE
-            out["detail"] = ("not exercised recently — the embed model may be "
-                             "unloaded at idle; it loads on demand when you "
-                             "ingest or search documents")
+            out["detail"] = reason or (
+                "not exercised recently — the embed model may be unloaded at "
+                "idle; it loads on demand when you ingest or search documents")
     except Exception as exc:
         # An error in the CHECK itself isn't a service outage → IDLE, not DOWN.
         out["status"] = _IDLE

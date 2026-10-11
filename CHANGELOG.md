@@ -1,3 +1,42 @@
+## [9.11.0] — Diagnostics: a working blank-URL Ollama no longer reads as "off"
+
+System Diagnostics showed **LLM off — "no LLM base URL configured"** and
+**Embeddings off — "semantic search disabled"** on an install that was plainly
+working: the LLM answered the very message asking why it showed off, and semantic
+search was turned on in Settings. The root cause was a split-brain default.
+
+**Root cause.** `llm_provider.create_provider` defaults a blank-URL Ollama to the
+standard local address (`http://homeassistant.local:11434/v1`), so the provider
+works. But the health check and the embeddings layer did **not** apply that same
+default — they treated a blank `llm_base_url` as "not configured":
+- the LLM check returned `off` for `provider=ollama` + blank URL **before** even
+  consulting that real agent calls had just succeeded;
+- `embeddings.is_enabled()` required a non-blank URL, so semantic search silently
+  fell back to keyword even though the user opted in.
+
+**What this lands:**
+- **One shared default.** `const.DEFAULT_OLLAMA_BASE_URL` is now the single source
+  of the blank-URL fallback, used by the provider factory, the embeddings layer,
+  and the health check so they can't disagree about a blank-URL Ollama again.
+- **LLM health consults real use first.** A recent successful agent call → `ok`
+  (whatever the base URL looks like); a real failure → `down`. Only when there's
+  no real signal does it resolve the Ollama default (including for a colon-tagged
+  local model like `gemma4:26b` mis-set against a cloud provider) and ping it —
+  `ok` if reachable, calm `idle` if not, and a plain `off` only when nothing is
+  configured. No more `off` on a working Ollama.
+- **Embeddings follow the opt-in.** With a blank URL, `is_enabled()` now keys on
+  the `semantic_search` flag and embeds against the default local Ollama; if the
+  model isn't pulled or Ollama is down it degrades to keyword search (unchanged),
+  and the health card now surfaces the probe's own reason (e.g. *"is the embed
+  model pulled? Try: ollama pull nomic-embed-text"*) instead of a generic line.
+- **Fail-safe, no behaviour regression.** Cloud providers, explicit URLs, and the
+  real-use DOWN/IDLE logic are unchanged; the default only *adds* a sensible
+  fallback where there was a blank.
+- **Tests** cover the exact reported case (blank-URL Ollama + recent use → ok),
+  the default-address ping, the idle-not-off regression, colon-tagged routing,
+  the truly-unconfigured OFF, and the embeddings opt-in + probe-reason surfacing.
+- **Version** — manifest 9.10.0 → **9.11.0**.
+
 ## [9.10.0] — Coverage metric reform: applicable-cell denominator + N/A ledger
 
 Groundwork for the agreed **80% target**, and a reporting-only change (zero

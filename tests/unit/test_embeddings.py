@@ -85,20 +85,32 @@ def test_store_mismatched_lengths_is_noop(emb):
 
 # ── is_enabled gating ────────────────────────────────────────────────────────
 
-def test_is_enabled_requires_flag_and_url(emb, monkeypatch):
+def test_is_enabled_follows_the_opt_in_flag(emb, monkeypatch):
     cfg = {}
     monkeypatch.setattr(emb, "_cfg", lambda k, d: cfg.get(k, d))
-    assert emb.is_enabled() is False                       # nothing set
+    assert emb.is_enabled() is False                       # opt-in off → off
     cfg["semantic_search"] = True
-    assert emb.is_enabled() is False                       # flag but no URL
-    cfg["llm_base_url"] = "http://gpu.local:11434"
-    assert emb.is_enabled() is True                        # both present
+    # The base URL now falls back to the standard local Ollama address, so the
+    # opt-in alone enables it — a blank URL no longer silently disables semantic
+    # search (the "embeddings show off though I turned it on" bug). It degrades to
+    # keyword search if Ollama/model isn't reachable, so this never forces a break.
+    assert emb.is_enabled() is True
+    cfg["llm_base_url"] = "http://gpu.local:11434"          # an explicit URL still works
+    assert emb.is_enabled() is True
 
 
 def test_ollama_base_strips_v1_suffix(emb, monkeypatch):
     monkeypatch.setattr(emb, "_cfg",
                         lambda k, d: "http://gpu.local:11434/v1" if k == "llm_base_url" else d)
     assert emb._ollama_base() == "http://gpu.local:11434"
+
+
+def test_ollama_base_defaults_when_blank(emb, monkeypatch):
+    # No configured URL → the standard local Ollama address (same default the LLM
+    # provider factory applies), never None — so is_enabled() keys on the opt-in.
+    monkeypatch.setattr(emb, "_cfg", lambda k, d: d)       # everything blank
+    base = emb._ollama_base()
+    assert base and "11434" in base and not base.endswith("/v1")
 
 
 # ── async embed with mocked Ollama session ───────────────────────────────────

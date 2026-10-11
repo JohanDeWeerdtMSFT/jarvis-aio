@@ -469,6 +469,82 @@ async def test_llm_ping_miss_becomes_idle_or_recent_ok(sh, monkeypatch):
     assert out["status"] == "ok" and "recent agent" in out["detail"]
 
 
+async def test_llm_ollama_blank_base_recent_use_is_ok(sh):
+    # The reported bug: provider=ollama with a blank base URL, but the agent just
+    # answered a message (recorded a real LLM success). This must read OK, not the
+    # old "off — no LLM base URL configured".
+    sh._USAGE.clear()
+    sh._cfg_store["llm_provider"] = "ollama"
+    sh._cfg_store["llm_base_url"] = ""
+    sh.record_usage("llm", True)
+    out = await sh._check_llm(_Hass({}))
+    assert out["status"] == "ok" and "recent agent" in out["detail"]
+
+
+async def test_llm_ollama_blank_base_pings_the_default_address(sh, monkeypatch):
+    # No recent usage, blank base: the check must resolve the SAME default local
+    # Ollama address the provider factory uses and ping THAT (not report "off").
+    sh._USAGE.clear()
+    sh._cfg_store["llm_provider"] = "ollama"
+    sh._cfg_store["llm_base_url"] = ""
+    captured = {}
+    async def _ping(hass, base):
+        captured["base"] = base
+        return (True, "reachable — 3 model(s) available")
+    monkeypatch.setattr(sh, "_ping_ollama", _ping)
+    out = await sh._check_llm(_Hass({}))
+    assert out["status"] == "ok"
+    assert "homeassistant.local:11434" in captured["base"]
+
+
+async def test_llm_ollama_blank_base_unreachable_is_idle_not_off(sh, monkeypatch):
+    # The key regression: a blank-URL Ollama that's momentarily unreachable is
+    # IDLE (calm), never the old OFF "no LLM base URL configured".
+    sh._USAGE.clear()
+    sh._cfg_store["llm_provider"] = "ollama"
+    sh._cfg_store["llm_base_url"] = ""
+    monkeypatch.setattr(sh, "_ping_ollama",
+                        lambda *a: _async_value((False, "unreachable")))
+    out = await sh._check_llm(_Hass({}))
+    assert out["status"] == "idle"
+    assert out["detail"] != "no LLM base URL configured"
+
+
+async def test_llm_colon_tagged_model_routes_to_ollama_default(sh, monkeypatch):
+    # provider mis-set to a cloud name but the model is an Ollama tag (gemma4:26b)
+    # and the base is blank → resolve the Ollama default, same as the provider.
+    sh._USAGE.clear()
+    sh._cfg_store["llm_provider"] = "gemini"
+    sh._cfg_store["model"] = "gemma4:26b"
+    sh._cfg_store["llm_base_url"] = ""
+    captured = {}
+    async def _ping(hass, base):
+        captured["base"] = base
+        return (True, "reachable")
+    monkeypatch.setattr(sh, "_ping_ollama", _ping)
+    out = await sh._check_llm(_Hass({}))
+    assert out["status"] == "ok" and "11434" in captured["base"]
+
+
+async def test_llm_truly_unconfigured_is_off(sh):
+    # Nothing configured at all (no provider, no base) is honestly OFF.
+    sh._USAGE.clear()
+    out = await sh._check_llm(_Hass({}))
+    assert out["status"] == "off" and "no LLM provider" in out["detail"]
+
+
+async def test_embeddings_idle_surfaces_probe_reason(sh, monkeypatch):
+    # When enabled but the probe fails (e.g. embed model not pulled) and there's
+    # no recent use, the health detail shows the probe's own actionable reason.
+    sh._USAGE.clear()
+    _install_emb_stub(monkeypatch, {
+        "ok": False,
+        "error": "is the embed model pulled? Try: ollama pull nomic-embed-text"})
+    out = await sh._check_embeddings(_Hass({}))
+    assert out["status"] == "idle"
+    assert "ollama pull" in out["detail"]
+
+
 async def test_embeddings_disabled_and_check_exception(sh, monkeypatch):
     emb = _install_emb_stub(monkeypatch, {"ok": True, "model": "x", "dim": 3})
     emb.is_enabled = lambda: False
