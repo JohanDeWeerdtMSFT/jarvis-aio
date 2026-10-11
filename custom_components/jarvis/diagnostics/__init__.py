@@ -132,6 +132,22 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict:
         return out
     diag["subsystems"] = await hass.async_add_executor_job(_collect_subsystems)
 
+    # Authority enforce rollout (the engine-vs-gate parity tally). This is the
+    # data that gates widening the enforce allowlist: per-capability agreement
+    # counts [agree, disagree], the overall rate, and recent mismatches, plus the
+    # current enforce state + allowlist. Read-only — surfacing it changes nothing;
+    # it makes the "which capabilities does the engine already agree on?" question
+    # answerable from the downloaded diagnostics instead of only the logs.
+    try:
+        from .. import authority_bridge as _ab
+        diag["authority_parity"] = {
+            "enforce_on": bool(getattr(_ab, "AUTHORITY_ENFORCE", False)),
+            "enforced_capabilities": sorted(_ab.AUTHORITY_ENFORCE_CAPABILITIES),
+            "tally": _redact(_ab.parity_summary(hass)),
+        }
+    except Exception as exc:
+        diag["authority_parity_error"] = str(exc)[:200]
+
     # Audio-routing snapshot — resolve each configured satellite→speaker pairing
     # and which TTS engines are selected, so "no audible reply" issues are
     # diagnosable directly (the pairings themselves are already in the config
