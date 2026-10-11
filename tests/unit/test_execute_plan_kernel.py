@@ -28,8 +28,33 @@ def published(load, monkeypatch):
     return sink
 
 
+@pytest.fixture
+def authority_calls(load, monkeypatch):
+    """Spy on the kernel authority engine's per-step verdict (MCU #4b)."""
+    ab = load("authority_bridge")
+    calls = []
+
+    def _spy(hass, d, s, *, legacy_ok=True, **k):
+        calls.append((d, s, legacy_ok))
+        return legacy_ok, None
+
+    monkeypatch.setattr(ab, "enforced_decision", _spy)
+    return calls
+
+
 def _steps(*specs):
     return [{"domain": d, "service": s, "entity_id": e} for d, s, e in specs]
+
+
+async def test_each_step_runs_through_kernel_authority(agent, fake_hass, published, authority_calls):
+    # #4b: execute_plan's authority contract — every step runs through the kernel
+    # authority engine (authority_bridge.enforced_decision), not just the legacy gate.
+    fake_hass.states.set("light.den", "off")
+    fake_hass.states.set("switch.fan", "off")
+    await agent._exec_execute_plan(fake_hass, {"steps": _steps(
+        ("light", "turn_on", "light.den"),
+        ("switch", "turn_on", "switch.fan"))})
+    assert authority_calls == [("light", "turn_on", True), ("switch", "turn_on", True)]
 
 
 async def test_multi_step_success_runs_all(agent, fake_hass, published):

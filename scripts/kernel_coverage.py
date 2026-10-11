@@ -89,12 +89,16 @@ _PATHS: dict[str, dict] = {
         },
     },
     # Each step's execution routes through the kernel planner
-    # (aexecute_plan) and publishes an actuation event (B4). Full plan
-    # ownership of execution; steps are arbitrary services, so no single
-    # expected end-state (no verify/outcome cell).
+    # (aexecute_plan) and publishes an actuation event (B4). Authority at parity
+    # (#4b): each step runs through the confirm-gate + kernel authority engine
+    # (authority_bridge.enforced_decision) — the same max-restriction belt as
+    # control_device, log-only parity except where it tightens an allowlisted
+    # security capability. Full plan ownership of execution; steps are arbitrary
+    # services, so no single expected end-state (no verify/outcome cell).
     "execute_plan": {
         "module": "agent.py",
         "contracts": {
+            "authority": {"stage": "parity", "evidence": "enforced_decision"},
             "plan": {"stage": "full", "evidence": "aexecute_plan"},
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
         },

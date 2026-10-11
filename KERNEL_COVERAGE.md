@@ -26,7 +26,7 @@ drift into fiction.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `control_device` | ◑ | ◑ | · | ◑ | ● | ● | ● |
 | `bulk_control` | ◑ | ◑ | · | ◑ | ◐ | · | · |
-| `execute_plan` | ◑ | · | · | · | ● | · | · |
+| `execute_plan` | ◑ | · | · | ◑ | ● | · | · |
 | `run_scene_or_script` | ◑ | ◑ | · | · | ◐ | · | · |
 | `set_mode` | ◑ | · | · | · | ◐ | · | · |
 | `intrusion` | ◑ | · | ◑ | · | · | · | · |
@@ -37,9 +37,9 @@ drift into fiction.
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 18.7%** weighted (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 19.4%** weighted (· none ◐ shadow ◑ parity ● full)
 
-**Honest coverage: 17.5%** — observe-only shadow cells excluded (they log, they govern nothing); only parity + full count. This is the number to move.
+**Honest coverage: 18.3%** — observe-only shadow cells excluded (they log, they govern nothing); only parity + full count. This is the number to move.
 <!-- END kernel-coverage -->
 
 **The honest figure above is the one to move** — most paths are still legacy,
