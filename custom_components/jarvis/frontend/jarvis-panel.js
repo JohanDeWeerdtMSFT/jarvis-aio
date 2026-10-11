@@ -3770,17 +3770,35 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
   }
   _trackerOptions(selected) {
     const states = this._hass?.states || {};
-    const cands = Object.keys(states).filter(eid => { const dom = eid.split('.')[0]; return dom === 'person' || dom === 'device_tracker'; }).sort();
+    const hasCoords = (st) => !!(st && st.attributes &&
+      st.attributes.latitude != null && st.attributes.longitude != null);
+    // Every entity JARVIS can read a live origin from: persons and device
+    // trackers by domain, zones (a fixed origin like "Work"), plus any other
+    // entity that actually exposes GPS lat/lon (e.g. a geocoded-location sensor)
+    // \u2014 matching exactly what the backend accepts for an origin (_entity_coords),
+    // so the picker no longer hides valid choices.
+    const cands = Object.keys(states).filter(eid => {
+      const dom = eid.split('.')[0];
+      if (dom === 'person' || dom === 'device_tracker' || dom === 'zone') return true;
+      return dom === 'sensor' && hasCoords(states[eid]);
+    }).sort();
     if (selected && !cands.includes(selected)) cands.unshift(selected);
     const opts = cands.map(eid => `<option value="${this._esc(eid)}"${eid === selected ? ' selected' : ''}>${this._esc(this._entName(eid))}</option>`).join('');
     return `<option value=""${selected ? '' : ' selected'}>\u2014 none \u2014</option>` + opts;
   }
   _travelSensorOptions(selected) {
     const states = this._hass?.states || {};
+    // The backend reads this sensor's state as minutes (float), so surface the
+    // likely drive-time sensors: a duration device_class, a minutes/hours unit,
+    // or a travel-ish name from the common HA travel-time integrations. Kept
+    // curated (not every one of hundreds of sensors) but broadened so more real
+    // candidates show; a currently-selected entity is always kept visible.
     const cands = Object.keys(states).filter(eid => {
       const dom = eid.split('.')[0]; if (dom !== 'sensor') return false;
       const a = states[eid].attributes || {}, dc = a.device_class || '', unit = a.unit_of_measurement || '';
-      return dc === 'duration' || /^(min|minutes|h|hr|hrs|hours)$/i.test(unit) || /travel|commute|duration|eta|route|waze|maps|traffic|drive_time|driving|to_work|to_home/i.test(eid);
+      return dc === 'duration'
+        || /^(min|mins|minute|minutes|h|hr|hrs|hour|hours)$/i.test(unit)
+        || /travel|commute|duration|eta|arrival|route|waze|maps|mapbox|tomtom|here[_ ]?travel|traffic|drive[_ ]?time|driving|depart|time_to|to_work|to_home/i.test(eid);
     }).sort();
     if (selected && !cands.includes(selected)) cands.unshift(selected);
     const opts = cands.map(eid => `<option value="${this._esc(eid)}"${eid === selected ? ' selected' : ''}>${this._esc(this._entName(eid))}</option>`).join('');
@@ -5075,15 +5093,15 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
             <input class="cfg-field cfg-num" type="number" min="1" max="50" step="1" data-cfg-key="memory_threading_max" value="${d.config?.memory_threading_max ?? ''}" placeholder="12">
           </div>
           <div class="cfg-row">
-            <label>Origin tracker</label>
+            <label>Origin tracker <span class="cfg-hint">where you set out from for drive-time &mdash; your phone or car GPS (a zone or a location sensor works too); blank uses whoever&rsquo;s tracked, then home</span></label>
             <select class="cfg-field" data-cfg-key="departure_origin_entity">${this._trackerOptions(d.config?.departure_origin_entity || '')}</select>
           </div>
           <div class="cfg-row">
-            <label>OSRM URL</label>
+            <label>OSRM URL <span class="cfg-hint">optional self-hosted routing server (OSRM); blank uses the free public router</span></label>
             <input class="cfg-field cfg-text" type="text" data-cfg-key="departure_osrm_url" value="${this._esc(d.config?.departure_osrm_url || '')}" placeholder="self-host (optional)">
           </div>
           <div class="cfg-row">
-            <label>Travel sensor</label>
+            <label>Travel sensor <span class="cfg-hint">optional override &mdash; a sensor that already reports drive-time in minutes (Waze, Google/HERE Maps&hellip;); blank computes it from your origin via OSRM</span></label>
             <select class="cfg-field" data-cfg-key="departure_travel_sensor">${this._travelSensorOptions(d.config?.departure_travel_sensor || '')}</select>
           </div>
           <div class="cfg-row" style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;">

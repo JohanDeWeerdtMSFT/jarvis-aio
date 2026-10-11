@@ -1,3 +1,27 @@
+## [9.12.0] — Departure settings: wider entity pickers + clearer help
+
+The **Origin tracker** and **Travel sensor** dropdowns in Settings → Home were
+narrower than what the feature actually accepts, and the three departure fields
+had no per-field explanation.
+
+- **Origin tracker now lists every entity JARVIS can use as an origin.** The
+  backend reads an origin from any entity exposing GPS `latitude`/`longitude`
+  (`cognition._entity_coords`), but the picker only offered `person` and
+  `device_tracker`. It now also surfaces **zones** (a fixed origin like "Work")
+  and any **location sensor** that carries coordinates — so it no longer hides
+  valid choices. A currently-selected entity is always kept visible.
+- **Travel sensor picker broadened.** The optional drive-time-sensor override now
+  matches more real candidates — more time units (singular minute/hour) and more
+  travel-time integration names (Waze, Google/HERE/Mapbox/TomTom, arrival/ETA,
+  `time_to_*`) — while staying curated rather than dumping every sensor.
+- **Per-field help text.** Each field now says what it's for inline: Origin
+  tracker ("where you set out from … blank uses whoever's tracked, then home"),
+  OSRM URL ("optional self-hosted router; blank uses the free public one"), and
+  Travel sensor ("optional override — a sensor already reporting minutes; blank
+  computes it via OSRM").
+- Frontend only — no backend/behaviour change. `node --check` + panel smoke test
+  green. **Version** — manifest 9.11.0 → **9.12.0**.
+
 ## [9.11.0] — Diagnostics: a working blank-URL Ollama no longer reads as "off"
 
 System Diagnostics showed **LLM off — "no LLM base URL configured"** and
