@@ -1,3 +1,30 @@
+## [9.5.0] — Telemetry honesty: flag unpriced models + provider-format tests (audit follow-up)
+
+The 9.3.0 review noted that the 9.1.0 cost panel could *understate* spend: the
+default price book treats unknown models as $0, so a mixed priced/unpriced total
+silently under-counted.
+
+**What this lands:**
+- **`llm_provider.telemetry_est_cost()`** now appends a trailing **`+`** when any
+  recorded call used a model the price book doesn't know — the figure is shown as
+  a conservative **lower bound** (`$0.1234+`) rather than silently counting the
+  unpriced call as free. A fully-priced total is unflagged; an unpriced-*only*
+  total still shows the `"—"` placeholder (never a misleading `$0.0000`).
+- **Provider-format + cached-pricing regression tests.** New tests exercise the
+  usage-field extraction across the shapes `_record_usage_shadow` must handle —
+  OpenAI (`prompt_tokens` + `prompt_tokens_details.cached_tokens`), Anthropic
+  (`input_tokens` / `cache_read_input_tokens`), Gemini (`usage_metadata.*_token_count`)
+  — asserting cached tokens are separated from input tokens (non-overlapping), and
+  that the default book bills cached tokens at the input rate when no cache rate
+  is set (so it never under-counts a cache hit).
+- **Still an estimate, still kill-switched.** No change to the enforce gate or the
+  fail-safe to `"—"`. Configurable per-model pricing and cross-restart persistence
+  of usage summaries remain larger follow-ups (the buffer is session-scoped by
+  design, like the panel's uptime figure).
+- **Version** — manifest 9.4.0 → **9.5.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.4.0] — Reconcile the kernel-coverage metric + guard it in CI (audit follow-up)
 
 An external 9.3.0 review flagged that `KERNEL_COVERAGE.md` reported **17.9%** in

@@ -89,8 +89,9 @@ def telemetry_est_cost() -> str:
     kill-switch being off, any fault, no calls yet, or an unpriced-only total
     (cost ``0``) all yield the "—" placeholder the panel showed before, so the
     figure never regresses the panel or implies a misleading free "$0.0000".
-    Cost is an estimate from an operator-overridable price book; unknown models
-    contribute ``0``, so it is a conservative lower bound.
+    Cost is an estimate from an operator-overridable price book; a trailing "+"
+    marks the total as a conservative lower bound when any call used a model the
+    price book doesn't know (so it contributed $0 and real spend is higher).
     """
     try:
         if not telemetry_enforce_enabled():
@@ -103,7 +104,15 @@ def telemetry_est_cost() -> str:
         totals = _tt.summarize(records)
         if totals.calls <= 0 or totals.estimated_cost_usd <= 0:
             return "—"
-        return f"${totals.estimated_cost_usd:.4f}"
+        # "+" marks the figure as a conservative LOWER BOUND: at least one call
+        # used a model absent from the price book, so it contributed $0 and the
+        # real spend is higher. Flagging it keeps the panel honest instead of
+        # silently under-counting an unpriced model as free.
+        book = _price_book()
+        unpriced = any(
+            r.total_tokens > 0 and book.price_for(getattr(r, "model", "") or "") is None
+            for r in records)
+        return f"${totals.estimated_cost_usd:.4f}" + ("+" if unpriced else "")
     except Exception:  # noqa: BLE001 - observe-only panel figure, never fatal
         return "—"
 

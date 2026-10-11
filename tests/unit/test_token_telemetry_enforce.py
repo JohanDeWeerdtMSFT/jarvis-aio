@@ -9,6 +9,8 @@ enforce directly. These tests cover the three moving parts:
   * llm_provider's priced retention ring + the enforce kill-switch;
   * websocket's fail-safe ``est_cost`` helper (never regresses the panel).
 """
+import types
+
 import pytest
 
 
@@ -145,3 +147,64 @@ def test_est_cost_placeholder_when_only_unpriced(llm):
     # placeholder rather than implying a misleading "$0.0000" (free).
     llm._record_usage_shadow(_Resp(_Usage(100_000, 50_000)), "local", "nonesuch-model")
     assert llm.telemetry_est_cost() == "—"
+
+
+# ── honesty: a mixed priced/unpriced total is flagged as a lower bound ────────
+def test_est_cost_flags_unpriced_mix_as_lower_bound(llm):
+    llm._record_usage_shadow(_Resp(_Usage(100_000, 50_000)), "openai", "gpt-5-mini")   # priced
+    llm._record_usage_shadow(_Resp(_Usage(100_000, 50_000)), "local", "nonesuch")      # unpriced
+    out = llm.telemetry_est_cost()
+    assert out.startswith("$") and out.endswith("+")   # real spend is higher
+
+
+def test_est_cost_no_flag_when_all_priced(llm):
+    llm._record_usage_shadow(_Resp(_Usage(100_000, 50_000)), "openai", "gpt-5-mini")
+    out = llm.telemetry_est_cost()
+    assert out.startswith("$") and not out.endswith("+")
+
+
+# ── provider-specific usage shapes + cached-token pricing ────────────────────
+def test_cached_tokens_priced_at_input_rate_by_default(tt):
+    book = tt.default_price_book()
+    # default-book entries leave cached_per_mtok=None → cached billed at the input
+    # rate (never under-counts a cache hit). gpt-5-mini input = 0.25 / Mtok.
+    assert book.estimate_cost(
+        "gpt-5-mini", input_tokens=0, output_tokens=0, cached_tokens=1_000_000
+    ) == pytest.approx(0.25)
+
+
+def test_record_usage_anthropic_shape(llm):
+    # Anthropic: input_tokens / output_tokens / cache_read_input_tokens on .usage
+    u = types.SimpleNamespace(input_tokens=1000, output_tokens=200,
+                              cache_read_input_tokens=300)
+    llm._record_usage_shadow(types.SimpleNamespace(usage=u), "anthropic",
+                             "claude-sonnet-4-5")
+    r = llm.usage_records()[-1]
+    assert r.cached_tokens == 300
+    assert r.input_tokens == 700          # 1000 prompt − 300 cached (non-overlapping)
+    assert r.output_tokens == 200
+    assert r.estimated_cost_usd > 0
+
+
+def test_record_usage_gemini_shape(llm):
+    # Gemini: *_token_count on .usage_metadata (no .usage)
+    u = types.SimpleNamespace(prompt_token_count=800, candidates_token_count=150,
+                              cached_content_token_count=200)
+    llm._record_usage_shadow(types.SimpleNamespace(usage_metadata=u), "gemini",
+                             "gemini-2.5-flash")
+    r = llm.usage_records()[-1]
+    assert r.cached_tokens == 200
+    assert r.input_tokens == 600          # 800 prompt − 200 cached
+    assert r.output_tokens == 150
+
+
+def test_record_usage_openai_cached_details_shape(llm):
+    # OpenAI: prompt_tokens_details.cached_tokens
+    u = types.SimpleNamespace(
+        prompt_tokens=1200, completion_tokens=300,
+        prompt_tokens_details=types.SimpleNamespace(cached_tokens=200))
+    llm._record_usage_shadow(types.SimpleNamespace(usage=u), "openai", "gpt-5-mini")
+    r = llm.usage_records()[-1]
+    assert r.cached_tokens == 200
+    assert r.input_tokens == 1000         # 1200 − 200 cached
+    assert r.output_tokens == 300
