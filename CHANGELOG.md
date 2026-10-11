@@ -1,3 +1,38 @@
+## [9.6.0] — Learned-trust autonomy damper: `outcome`/learning gets its first consumer (audit #1)
+
+The 9.3.0 audit flagged that 9.2.0 closed the learning loop (per-capability trust
+is persisted from real verified outcomes) but *nothing read it* — the loop drove
+no decision. This wires that trust into a bounded, explainable, safety-subordinate
+decision policy: its first consumer.
+
+**What this lands:**
+- **`cognitive_core.is_autonomous` gains a third downward-only gate** — the
+  learned-trust damper. A granted convenience pattern whose capability has a
+  **proven poor track record** (learned trust below `AUTONOMY_TRUST_FLOOR` = 0.35,
+  over at least `AUTONOMY_TRUST_MIN_SAMPLES` = 5 recent outcomes) falls back to
+  asking instead of auto-acting.
+- **Bounded + explainable.** A fixed floor and a minimum-evidence gate; the
+  decision is logged with its trust/sample numbers (`autonomy(trust-shadow): …`
+  always; `autonomy(trust): withholding …` when it acts).
+- **Learning never overrides authority or safety.** The damper is **downward-only**
+  — it can only withhold auto-action, never grant it — runs *after* the Phase N
+  security ceiling and the Phase AC context gate, and safety events never route
+  through `is_autonomous` at all. High trust can never promote an ungranted or
+  mode-blocked pattern.
+- **Recovery is automatic.** The outcomes window is bounded, so stale failures age
+  out and a capability's trust climbs back as the loop sees fresh successes.
+- **`actuation.capability_reliability(class)`** — a new accessor aggregating the
+  persisted learned trust across the fine capabilities of a class (the **minimum**
+  — the most conservative — plus the evidence count).
+- **Owner-gated, DEFAULT-OFF, kill-switched, fail-safe.** Shipping is
+  behaviour-preserving: the damper only shadow-logs until the household opts in via
+  `AUTONOMY_TRUST_DAMPER` / the `autonomy_trust_damper` config key; any fault, or
+  too little evidence, acts as today. (Recommended: watch the `trust-shadow` logs
+  before flipping it on.)
+- **Version** — manifest 9.5.0 → **9.6.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.5.0] — Telemetry honesty: flag unpriced models + provider-format tests (audit follow-up)
 
 The 9.3.0 review noted that the 9.1.0 cost panel could *understate* spend: the

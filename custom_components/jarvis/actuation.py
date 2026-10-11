@@ -465,6 +465,43 @@ def learned_trust(cap: str) -> float:
         return _CAP_TRUST_PRIOR
 
 
+def _in_capability_class(cap: str, cls: str) -> bool:
+    """True when fine capability ``cap`` belongs to coarse class ``cls`` — it
+    equals the class ("light") or has it as its dotted prefix ("light.turn_on")."""
+    cap = str(cap or "")
+    return bool(cls) and (cap == cls or cap.split(".", 1)[0] == cls)
+
+
+def capability_reliability(capability_class: str) -> tuple[float, int]:
+    """Aggregate learned reliability for a capability CLASS, for an autonomy
+    consumer (the learned-trust damper). Returns ``(trust, samples)``:
+
+    - ``trust`` — the **minimum** persisted :func:`learned_trust` among the fine
+      capabilities in this class (most conservative: one proven-unreliable
+      sub-capability dampens the whole class), or the neutral prior when none is
+      stored yet.
+    - ``samples`` — how many recent outcomes back it (the evidence; it is what a
+      min-evidence policy gates on, so a barely-seen capability is never damped).
+
+    A capability joins the class when it equals it or has it as its dotted prefix
+    (``"light"`` covers ``"light"`` and ``"light.turn_on"``). The recent-outcomes
+    window is bounded, so stale failures age out — trust recovers as the loop sees
+    fresh successes. Pure read; never raises.
+    """
+    cls = str(capability_class or "").strip()
+    if not cls:
+        return (_CAP_TRUST_PRIOR, 0)
+    try:
+        trusts = [float(v) for k, v in _LEARN_STORE.items()
+                  if _in_capability_class(k, cls)]
+        samples = sum(1 for o in _recent_outcomes
+                      if _in_capability_class(getattr(o, "capability", "") or "", cls))
+        trust = min(trusts) if trusts else _CAP_TRUST_PRIOR
+        return (float(trust), int(samples))
+    except Exception:
+        return (_CAP_TRUST_PRIOR, 0)
+
+
 def _learn_store_load(hass) -> None:
     global _LEARN_STORE_LOADED, _LEARN_STORE_PATH
     if _LEARN_STORE_LOADED:
