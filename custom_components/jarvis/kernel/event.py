@@ -29,6 +29,7 @@ EVENT_CAMERA_ANALYSIS = "camera.analysis"
 EVENT_VOICE_TURN = "voice.turn"
 EVENT_ACTUATION = "control.actuation"
 EVENT_SITUATION = "situation.transition"
+EVENT_GOAL = "goal.transition"
 
 
 def _new_id() -> str:
@@ -263,6 +264,38 @@ def from_situation(
         location=location,
         data={"kind": kind, "state": state, "action": action,
               "situation_id": situation_id},
+        importance=importance,
+        correlation_id=correlation_id,
+    )
+
+
+def from_goal(
+    action: str,
+    *,
+    goal_id: Any = None,
+    title: Optional[str] = None,
+    status: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    importance: float = 0.5,
+) -> JarvisEvent:
+    """A long-horizon goal lifecycle transition as a JarvisEvent.
+
+    The nervous-system record that an *outcome pursued across time* was engaged or
+    closed (done / failed / cancelled) — ``action`` is the transition verb
+    ("engaged", "closed"), ``status`` the goal's resulting state. Distinct from the
+    agent tool-calls a goal run performs: those actuations already enter the stream
+    as ``control.actuation`` events via the wired actuator paths. Emitted by the
+    goal planner so goals enter the event stream the same way perception,
+    actuation and situations do (MCU audit item #8, the event bus as the nervous
+    system). Parity: published and recorded by the ledger, but no consumer reacts
+    to it yet.
+    """
+    return JarvisEvent(
+        type=EVENT_GOAL,
+        source="goals",
+        subject=(str(goal_id) if goal_id is not None else None),
+        data={"action": action, "goal_id": goal_id, "title": title,
+              "status": status},
         importance=importance,
         correlation_id=correlation_id,
     )

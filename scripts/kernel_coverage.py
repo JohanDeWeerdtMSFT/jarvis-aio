@@ -263,9 +263,25 @@ _PATHS: dict[str, dict] = {
     # gaps, not pre-emptively N/A: whether a path has a deterministic end-state
     # is decided when it is wired, and a conservative gap counts against us until
     # then.
+    # goals is an orchestration path: when a goal comes due it runs the headless
+    # agent, whose tool-calls actuate through the already-wired paths. What goals
+    # itself owns on the spine: the goal-as-Plan (F1/F2, shadow) and the lifecycle
+    # events it publishes. world_model/authority/verify/outcome stay honest gaps —
+    # goals doesn't read state or actuate directly (the agent does), so they are
+    # not yet claimed here.
     "goals": {
         "module": "goals.py",
-        "contracts": {},
+        "contracts": {
+            # F1/F2: a goal's ordered steps are expressed as a kernel Plan and
+            # durably journaled (record_plan via _shadow_plan). Shadow — the Plan
+            # is built and recorded but never executed or consulted; the goal
+            # store stays authoritative (the enforce flip is the owner-gated H4b).
+            "plan": {"stage": "shadow", "evidence": "_shadow_plan"},
+            # Each goal engage/close publishes a canonical goal.transition
+            # JarvisEvent on the bus (parity — enters the stream + ledger, no
+            # consumer reacts yet), the same nervous-system wiring as situations.
+            "event": {"stage": "parity", "evidence": "publish_goal"},
+        },
         "na": {"situation": "goal-driven actuation is imperative, not a "
                             "situation lifecycle"},
     },

@@ -55,6 +55,16 @@ def test_control_device_authority_and_verify_declared(kc):
     assert set(rows["friday"].values()) == {"none"}
 
 
+def test_goals_plan_shadow_and_event_parity(kc):
+    # goals onto the spine #1: the goal→Plan is credited at shadow (F1/F2) and the
+    # goal.transition events are parity. The other three legacy paths stay blank.
+    rows = kc.scan()
+    assert rows["goals"]["plan"] == "shadow"
+    assert rows["goals"]["event"] == "parity"
+    for p in ("proactive", "friday", "homer"):
+        assert rows[p]["event"] == "none" and rows[p]["plan"] == "none"
+
+
 def test_drift_detects_a_bad_declaration(kc, monkeypatch):
     # Inject a path claiming a stage with evidence that cannot be found.
     bad = dict(kc._PATHS)

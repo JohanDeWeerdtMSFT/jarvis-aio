@@ -419,6 +419,23 @@ def build_prompt(goal: dict, *, deadline_passed: bool = False) -> str:
 
 # ── execution (async — the core tick calls this) ─────────────────────────────
 
+def _emit_goal_event(hass, action: str, goal: Optional[dict],
+                     *, status: Optional[str] = None) -> None:
+    """Publish a goal lifecycle transition on the kernel event bus (parity,
+    best-effort). The goal store stays authoritative; this only mirrors the
+    engage/close onto the bus so goals enter the event stream the same way
+    situations and actuations do — no consumer reacts to it yet. Never raises."""
+    try:
+        from . import events
+        g = goal or {}
+        events.publish_goal(
+            hass, action,
+            goal_id=g.get("id"), title=g.get("title"),
+            status=status if status is not None else g.get("status"))
+    except Exception:   # pragma: no cover - defensive
+        pass
+
+
 async def async_process_due(
     hass, config: dict,
     runner: Optional[Callable[[str, str], Awaitable[str]]] = None,
@@ -459,10 +476,12 @@ async def async_process_due(
             g2 = await hass.async_add_executor_job(
                 lambda: get(gid, db_path=db_path))
             actions.append(_finish_action(g2))
+            _emit_goal_event(hass, "closed", g2, status="failed")
             continue
 
         deadline_passed = bool(g.get("deadline_ts")) and \
             _iso(t) > str(g["deadline_ts"])
+        _emit_goal_event(hass, "engaged", g, status="active")
         prompt = build_prompt(g, deadline_passed=deadline_passed)
         try:
             result = (await runner(prompt, "") or "").strip()
@@ -501,6 +520,7 @@ async def async_process_due(
 
         if g2["status"] in ("done", "failed"):
             actions.append(_finish_action(g2))
+            _emit_goal_event(hass, "closed", g2)
         # still active → quiet by design
 
     return actions
