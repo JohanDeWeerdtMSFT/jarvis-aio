@@ -1,3 +1,36 @@
+## [9.1.0] — Post-Ω evergreen: `token_telemetry` → enforce (TC4)
+
+The first evergreen increment after the Ω capstone, closing one of the three
+`token_telemetry` / `outcome` / `provenance` rungs left open in #237. Honest and
+kill-switched, under the same discipline — Phase Ω has no exit, capability folds
+in forever on the ladder.
+
+**What this lands:**
+- **`token_telemetry` → enforce.** The status panel's `est_cost` read a literal
+  `"—"` placeholder; it now renders the **actual measured** session spend. There
+  is no independent legacy estimate to run a TC3 agreement-parity against, and a
+  measured `UsageRecord` *is* the ground truth for a pure measurement primitive,
+  so this advances shadow → enforce directly (TC3 collapses as N/A, documented in
+  the adoption matrix rather than faked).
+- **`kernel/token_telemetry.py`** — adds `default_price_book()`: a conservative,
+  operator-overridable estimate of per-1M-token rates across the model families
+  JARVIS routes (OpenAI, Anthropic, Gemini, Groq/Llama), most-specific key first,
+  no default so an unknown model contributes `0` and the total stays a lower bound.
+- **`llm_provider.py`** — each call's `UsageRecord` is now **priced** (via the
+  default book) and retained in a bounded, session-scoped ring; `usage_records()`,
+  `telemetry_enforce_enabled()` and `telemetry_est_cost()` expose the summed figure.
+- **`websocket.py`** — the panel's `est_cost` delegates to `telemetry_est_cost()`.
+- **Fail-safe + kill-switch.** Any fault, no calls yet, an unpriced-only total, or
+  `TOKEN_TELEMETRY_ENFORCE` / the `token_telemetry_enforce` config key being off
+  all revert the panel to the `"—"` placeholder — the panel never regresses or
+  implies a misleading free `"$0.0000"`. Owner-authorized ON by default.
+- **Scope.** The *other* `token_telemetry` consumer — Phase Y reading telemetry to
+  tune model spend — remains separate and unshipped. `outcome` and `provenance`
+  (their parity rungs) are tracked next in #237.
+- **Version** — manifest 9.0.0 → **9.1.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.0.0] — Phase Ω — Continuous Evolution: the MCU architecture is complete
 
 The capstone. JARVIS crosses from *building* the kernel spine to *evolving* on a

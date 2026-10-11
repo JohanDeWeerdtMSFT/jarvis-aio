@@ -243,11 +243,17 @@ _DECLARED: dict[str, dict] = {
     # token_telemetry: cognitive token & cost telemetry (cross-cutting
     # observability, feeds Phase Y). A UsageRecord captures a call's actual
     # input/output/cached tokens by tier + model, a PriceBook estimates cost,
-    # and summarize/by_tier/by_model roll it up. SHADOW (TC2): llm_provider emits
-    # a UsageRecord per call from each provider's own usage fields, observe-only
-    # (kill-switch TOKEN_TELEMETRY_SHADOW); nothing consumes it yet. Parity vs
-    # current estimates, enforce when the panel + Phase Y read it.
-    "token_telemetry": {"stage": "shadow", "owners": ["llm_provider"]},
+    # and summarize/by_tier/by_model roll it up. ENFORCE (TC4): llm_provider
+    # records a priced UsageRecord per call (default_price_book) into a bounded
+    # session ring and sums it through kernel.summarize in telemetry_est_cost(),
+    # which the status panel renders where it previously showed a literal "—".
+    # There is no independent legacy estimate to run a TC3 agreement-parity
+    # against, and the record *is* the ground truth for a pure measurement
+    # primitive, so this advances shadow → enforce directly. Additive + fail-safe:
+    # the figure reverts to "—" if TOKEN_TELEMETRY_ENFORCE / the
+    # `token_telemetry_enforce` config key is off or anything faults. (Phase Y
+    # reading telemetry is a separate consumer.)
+    "token_telemetry": {"stage": "enforce", "owners": ["llm_provider"]},
     # outcome: canonical outcome model (Epistemic Fabric, pre-Phase M). A
     # structured Outcome (intended/observed/success/confidence/deviation/cause/
     # side_effects/feedback) with a distilled learning_signal in [-1,1], so M

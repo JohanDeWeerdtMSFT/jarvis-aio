@@ -138,6 +138,43 @@ class PriceBook:
         )
 
 
+# ── Default price book ───────────────────────────────────────────────────────
+#
+# Approximate public list prices (USD per 1M tokens, ~2026) for the model
+# families JARVIS routes across, so an operator sees a ballpark spend without
+# configuring anything. These are *estimates*, deliberately conservative, and an
+# operator can override them. Keys are matched case-insensitively as substrings
+# of the model id, most-specific first (``price_for`` returns the first matching
+# key in insertion order), so ``gpt-5-mini`` is listed before ``gpt-5``. Cached
+# rates are left at the input rate (``cached_per_mtok=None``) so the estimate
+# never *under*-counts a cache hit. Unknown models carry no entry and no default,
+# so they contribute ``0.0`` — the total is a documented lower bound, never an
+# error.
+_DEFAULT_PRICES: Tuple[Tuple[str, ModelPrice], ...] = (
+    ("gpt-5-mini", ModelPrice(input_per_mtok=0.25, output_per_mtok=2.0)),
+    ("gpt-5", ModelPrice(input_per_mtok=1.25, output_per_mtok=10.0)),
+    ("gpt-4o-mini", ModelPrice(input_per_mtok=0.15, output_per_mtok=0.60)),
+    ("gpt-4o", ModelPrice(input_per_mtok=2.5, output_per_mtok=10.0)),
+    ("opus", ModelPrice(input_per_mtok=15.0, output_per_mtok=75.0)),
+    ("sonnet", ModelPrice(input_per_mtok=3.0, output_per_mtok=15.0)),
+    ("haiku", ModelPrice(input_per_mtok=0.80, output_per_mtok=4.0)),
+    ("gemini-2.5-pro", ModelPrice(input_per_mtok=1.25, output_per_mtok=10.0)),
+    ("gemini", ModelPrice(input_per_mtok=0.10, output_per_mtok=0.40)),
+    ("llama", ModelPrice(input_per_mtok=0.10, output_per_mtok=0.30)),
+)
+
+
+def default_price_book() -> "PriceBook":
+    """A conservative, operator-overridable estimate of per-model rates.
+
+    Covers the model families JARVIS commonly routes across (OpenAI, Anthropic,
+    Gemini, Groq/Llama). No default price is set, so an unknown model costs
+    ``0.0`` and the summed cost stays a lower-bound estimate rather than a guess.
+    Pure: a fresh :class:`PriceBook` each call, no shared mutable state.
+    """
+    return PriceBook(dict(_DEFAULT_PRICES))
+
+
 @dataclass(frozen=True)
 class UsageRecord:
     """One model call's measured token usage + attributed cost."""
