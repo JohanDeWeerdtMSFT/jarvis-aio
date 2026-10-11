@@ -75,11 +75,15 @@ _PATHS: dict[str, dict] = {
     },
     # Recorded as one explicit N-step kernel Plan (shadow) and each executed
     # target routed through the actuation envelope (B3): WorldModel context +
-    # actuation event. Fire-and-forget, so no per-device verify/outcome.
+    # actuation event. Authority at parity (#4b): per target the kernel authority
+    # engine's verdict is recorded against the legacy skip decision (log-only,
+    # covering the skipped protected targets too). Fire-and-forget, so no
+    # per-device verify/outcome by design.
     "bulk_control": {
         "module": "agent.py",
         "contracts": {
             "world_model": {"stage": "parity", "evidence": "actuation.context"},
+            "authority": {"stage": "parity", "evidence": "record_control_parity"},
             "event": {"stage": "parity", "evidence": "actuation.emit_event"},
             "plan": {"stage": "shadow", "evidence": "bulk_plan"},
         },

@@ -1,3 +1,32 @@
+## [9.7.0] — Action-path coverage: `bulk_control` authority parity (audit #4b, 1/N)
+
+First increment of the audit's larger architectural item (#4b): lifting the
+*honest* kernel-coverage figure by wiring the pipeline contracts across the
+still-legacy action paths. This PR does `bulk_control`'s authority contract.
+
+**What this lands:**
+- **`bulk_control` gains authority parity** (`·` → `◑`). For every target — the
+  executed ones *and* the skipped protected ones — it now records the kernel
+  authority engine's verdict against the legacy skip decision
+  (`authority_bridge.record_control_parity`), log-only. So bulk's authority
+  contract is measured on real traffic instead of blank, exactly as
+  `control_device` already does.
+- **No behaviour change.** Observe-only (the parity record never alters what bulk
+  does); bulk stays fire-and-forget and still skips protected devices. Best-effort
+  and defensive — any fault in the record is swallowed.
+- **Honest coverage: 16.7% → 17.5%** (weighted 17.9% → 18.7%), generated and
+  CI-guarded by the 9.4.0 reconciliation — the figure moved because a real
+  contract was wired, not because the number was edited.
+- `bulk_control`'s `verify`/`outcome` cells stay blank **by design**: a batch is
+  fire-and-forget and can't be per-device verified or voice-confirmed; forcing
+  those would be the inflation the matrix exists to prevent.
+- **Version** — manifest 9.6.0 → **9.7.0**.
+
+Remaining #4b paths (`execute_plan`, `run_scene_or_script`, `set_mode`, and the
+detector paths) follow as their own PRs; #5 (HAOS lifecycle tests) after.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.6.0] — Learned-trust autonomy damper: `outcome`/learning gets its first consumer (audit #1)
 
 The 9.3.0 audit flagged that 9.2.0 closed the learning loop (per-capability trust

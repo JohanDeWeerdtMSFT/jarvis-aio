@@ -1595,7 +1595,7 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
     elif action in ("lock",):
         entities = [e for e in entities if (hass.states.get(e) or type("", (), {"state": ""})()).state == "unlocked"]
 
-    from . import policy, actuation
+    from . import policy, actuation, authority_bridge
     from .kernel import plan as _kplan
 
     # MCU Phase B (B3) / Phase H (H2): a bulk operation is an *explicit plan with
@@ -1628,10 +1628,21 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
             }
             if action in svc_map:
                 sd, sn = svc_map[action]
+                # Authority parity (MCU #4b, log-only): record the kernel
+                # authority engine's verdict for this target against the legacy
+                # skip decision — observe-only, covering the skipped (protected)
+                # targets too, so bulk's authority contract is measured, not blank.
+                # Never changes what bulk does (fire-and-forget, protected skipped).
+                held = policy.requires_confirmation(hass, sd, sn, eid)
+                try:
+                    authority_bridge.record_control_parity(
+                        hass, sd, sn, allowed=(not held), scope=eid, intent=action)
+                except Exception:  # pragma: no cover - log-only, never disrupt bulk
+                    pass
                 # Protected actions are not run in bulk — a batch can't be
                 # meaningfully voice-confirmed per device. Skip and report so
                 # the agent confirms each one via control_device instead.
-                if policy.requires_confirmation(hass, sd, sn, eid):
+                if held:
                     blocked += 1
                     continue
                 capability = f"{sd}.{sn}"
