@@ -35,8 +35,14 @@ import sys
 _CONTRACTS = ["event", "world_model", "situation", "authority", "plan",
               "verify", "outcome"]
 
-# How much each stage counts toward coverage.
+# How much each stage counts toward coverage. Two scales, both generated so
+# neither can drift from a hand-written figure (the earlier doc hard-coded an
+# "honest" number in prose that silently diverged from the generated one):
+#   _WEIGHT        — weighted: observe-only shadow earns 1/3 partial credit.
+#   _STRICT_WEIGHT — honest: shadow earns 0 (it governs nothing — it only logs),
+#                    so only parity (logs agreement) and full (drives) count.
 _WEIGHT = {"none": 0.0, "shadow": 1 / 3, "parity": 2 / 3, "full": 1.0}
+_STRICT_WEIGHT = {"none": 0.0, "shadow": 0.0, "parity": 2 / 3, "full": 1.0}
 _ICON = {"none": "·", "shadow": "◐", "parity": "◑", "full": "●"}
 
 
@@ -234,12 +240,19 @@ def scan() -> dict[str, dict]:
     }
 
 
-def coverage_pct(rows: dict[str, dict] | None = None) -> float:
+def coverage_pct(rows: dict[str, dict] | None = None,
+                 weights: dict[str, float] | None = None) -> float:
     rows = rows or scan()
+    w = weights or _WEIGHT
     total = len(_PATHS) * len(_CONTRACTS)
-    got = sum(_WEIGHT.get(stage, 0.0)
+    got = sum(w.get(stage, 0.0)
               for contracts in rows.values() for stage in contracts.values())
     return round(100.0 * got / total, 1) if total else 0.0
+
+
+def strict_coverage_pct(rows: dict[str, dict] | None = None) -> float:
+    """The honest figure: observe-only shadow cells earn no governance credit."""
+    return coverage_pct(rows, _STRICT_WEIGHT)
 
 
 def drift() -> list[str]:
@@ -275,9 +288,41 @@ def render_markdown(rows: dict[str, dict] | None = None) -> str:
         cells = " | ".join(f"{_ICON[rows[path][c]]}" for c in _CONTRACTS)
         lines.append(f"| `{path}` | {cells} |")
     lines.append("")
-    lines.append(f"**Kernel coverage: {coverage_pct(rows)}%** "
+    lines.append(f"**Kernel coverage: {coverage_pct(rows)}%** weighted "
                  "(· none ◐ shadow ◑ parity ● full)")
+    lines.append("")
+    lines.append(f"**Honest coverage: {strict_coverage_pct(rows)}%** — "
+                 "observe-only shadow cells excluded (they log, they govern "
+                 "nothing); only parity + full count. This is the number to move.")
     return "\n".join(lines)
+
+
+_DOC_BEGIN = "<!-- BEGIN kernel-coverage"
+_DOC_END = "<!-- END kernel-coverage -->"
+
+
+def _coverage_doc_path() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parent.parent / "KERNEL_COVERAGE.md"
+
+
+def doc_block_drift(rows: dict[str, dict] | None = None) -> list[str]:
+    """Problem if KERNEL_COVERAGE.md's embedded matrix + figures diverge from the
+    generator — so a stale hand-edit, or a figure left un-regenerated after the
+    matrix moved, fails CI instead of silently disagreeing with the doc."""
+    rows = rows or scan()
+    path = _coverage_doc_path()
+    try:
+        text = path.read_text()
+    except OSError:
+        return [f"{path.name} not found"]
+    if _DOC_BEGIN not in text or _DOC_END not in text:
+        return [f"{path.name}: kernel-coverage markers missing"]
+    after_begin = text.split(_DOC_BEGIN, 1)[1].split("-->", 1)[1]
+    embedded = after_begin.split(_DOC_END, 1)[0].strip()
+    if embedded != render_markdown(rows).strip():
+        return [f"{path.name}: embedded coverage block is stale — regenerate it "
+                "with `python3 scripts/kernel_coverage.py --markdown`"]
+    return []
 
 
 def render_table(rows: dict[str, dict] | None = None) -> str:
@@ -302,7 +347,7 @@ def main(argv: list[str]) -> int:
               "path × contract cells are kernel-wired")
 
     if "--check" in argv:
-        problems = drift()
+        problems = drift() + doc_block_drift(rows)
         gate = undeclared_actuator_tools()
         if problems or gate:
             if problems:

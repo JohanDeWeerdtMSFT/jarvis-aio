@@ -1,3 +1,33 @@
+## [9.4.0] — Reconcile the kernel-coverage metric + guard it in CI (audit follow-up)
+
+An external 9.3.0 review flagged that `KERNEL_COVERAGE.md` reported **17.9%** in
+its generated block while its prose asserted **16.7%** as "the honest number" —
+and nothing made CI fail when the two diverged. Both were real, from the *same*
+matrix: 17.9% gives observe-only `shadow` cells ⅓ credit; 16.7% excludes them
+(they log, they govern nothing). The honest figure was hand-written in prose, so
+it silently drifted whenever the generated number moved.
+
+**What this lands (no runtime behaviour change — tooling + docs integrity):**
+- **`scripts/kernel_coverage.py`** — adds `strict_coverage_pct()` (the honest
+  scale: `shadow = 0`, only `parity` + `full` count) alongside the weighted one.
+  `render_markdown()` now emits **both** figures, so the honest number is
+  generated, not hand-typed, and can't drift.
+- **CI guard.** `--check` now also runs `doc_block_drift()`: it fails if
+  `KERNEL_COVERAGE.md`'s embedded block (matrix + both percentages) diverges from
+  the generator — a stale hand-edit or an un-regenerated figure now fails the
+  `kernel_coverage` gate instead of disagreeing silently.
+- **`KERNEL_COVERAGE.md`** — the block is regenerated with both figures, and the
+  prose no longer hard-codes a number; it points at the generated honest figure
+  and explains the two scales.
+- Honest coverage stands at **16.7%** today — most consequential action paths
+  (`bulk_control`, `execute_plan`, `run_scene_or_script`, `set_mode`, and the
+  detector paths) are still legacy or only partially wired. Lifting that number
+  — per-path authority / verify / outcome / recovery evidence — remains the real
+  architectural work ahead, tracked by this matrix.
+- **Version** — manifest 9.3.0 → **9.4.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.3.0] — Post-Ω evergreen: `provenance` shadow coverage → the situation domain
 
 The third increment of the #237 trio. Unlike the other two, `provenance` has no

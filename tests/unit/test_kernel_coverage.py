@@ -73,6 +73,39 @@ def test_markdown_lists_paths_and_coverage(kc):
         assert contract in md
 
 
+# ── reconciled weighted vs honest figures (audit follow-up) ──────────────────
+
+def test_strict_coverage_excludes_shadow(kc):
+    weighted = kc.coverage_pct()
+    strict = kc.strict_coverage_pct()
+    assert 0.0 <= strict <= weighted <= 100.0
+    # strict drops shadow's 1/3 credit, so it is strictly lower while any shadow
+    # cell exists in the matrix (it does today).
+    has_shadow = any(stage == "shadow"
+                     for contracts in kc.scan().values()
+                     for stage in contracts.values())
+    if has_shadow:
+        assert strict < weighted
+
+
+def test_markdown_emits_both_figures(kc):
+    md = kc.render_markdown()
+    assert "weighted" in md and "Honest coverage:" in md
+
+
+def test_doc_block_in_sync_with_generator(kc):
+    # The committed KERNEL_COVERAGE.md block must match the generator exactly.
+    assert kc.doc_block_drift() == []
+
+
+def test_doc_block_drift_detects_divergence(kc, monkeypatch):
+    # If the generator and the embedded block disagree, --check must flag it.
+    monkeypatch.setattr(kc, "render_markdown",
+                        lambda rows=None: "| totally | different |\n**x**")
+    problems = kc.doc_block_drift()
+    assert problems and "stale" in problems[0]
+
+
 # ── 8.34.0 governance gate ───────────────────────────────────────────────────
 
 def test_governance_gate_satisfied(kc):
