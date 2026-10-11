@@ -2217,6 +2217,60 @@ def _contextual_autonomy_enforce_on() -> bool:
         return False
 
 
+# Phase M→N — learned-trust autonomy damper. The closed learning loop
+# (actuation.LEARNING_ENFORCE, 9.2.0) persists a per-capability trust from real
+# verified outcomes; this is its first *consumer*. A granted convenience pattern
+# whose capability has a PROVEN poor track record — learned trust below a floor,
+# over enough evidence — falls back to asking instead of auto-acting. Bounded and
+# explainable: a fixed floor + a minimum-evidence gate, the decision logged with
+# its trust/sample numbers. Downward-only and safe-directional: it can only ever
+# withhold auto-action, never grant it; it runs AFTER the Phase N security ceiling
+# and the AC context gate, and safety events never route through is_autonomous at
+# all — so learning can never override authority or safety. Owner-gated,
+# DEFAULT-OFF (behaviour-preserving; shadow-logs the would-be decision regardless),
+# kill-switched, and fail-safe (any fault, or too little evidence, → act as today).
+# Recovery is automatic: the outcomes window is bounded, so stale failures age out
+# and trust climbs back as the loop sees fresh successes.
+AUTONOMY_TRUST_DAMPER = False
+AUTONOMY_TRUST_FLOOR = 0.35        # below this learned trust → damp (if enough evidence)
+AUTONOMY_TRUST_MIN_SAMPLES = 5     # min recent outcomes before trust may damp at all
+
+
+def _autonomy_trust_damper_on() -> bool:
+    """True when the household has opted into the learned-trust damper
+    (`AUTONOMY_TRUST_DAMPER` or the `autonomy_trust_damper` config key). Never
+    raises."""
+    if AUTONOMY_TRUST_DAMPER:
+        return True
+    try:
+        from . import jarvis_config
+        return bool(jarvis_config.get("autonomy_trust_damper", False))
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
+def _trust_damp_decision(pattern_key: str) -> tuple[bool, str]:
+    """Return ``(should_damp, reason)`` for the learned-trust damper. ``reason`` is
+    '' when the pattern has no derivable capability (nothing to judge). Pure read
+    of the persisted learned trust; never raises. Does not consult the enforce
+    flag — the caller shadow-logs the reason and only acts on ``should_damp`` when
+    the damper is switched on."""
+    cap = _PATTERN_CAPABILITY.get(str(pattern_key or "").split(":")[0])
+    if not cap:
+        return (False, "")
+    try:
+        from . import actuation
+        trust, samples = actuation.capability_reliability(cap)
+    except Exception:  # pragma: no cover - defensive
+        return (False, "")
+    if samples < AUTONOMY_TRUST_MIN_SAMPLES:
+        return (False, f"capability={cap} trust={trust:.2f} samples={samples} "
+                       f"(<{AUTONOMY_TRUST_MIN_SAMPLES} evidence → no damp)")
+    damp = trust < AUTONOMY_TRUST_FLOOR
+    return (damp, f"capability={cap} trust={trust:.2f} samples={samples} "
+                  f"floor={AUTONOMY_TRUST_FLOOR:.2f} → {'DAMP' if damp else 'ok'}")
+
+
 def _guests_present(hass) -> bool:
     """True when a recently-recognised face is a NON-resident — a named visitor,
     or a name the roster does not know as a resident — i.e. a guest is in the
@@ -2410,6 +2464,21 @@ class AutonomyManager:
                     return False
             except Exception:
                 pass
+        # Phase M→N learned-trust damper (owner-gated, default OFF; shadow-logs
+        # always). Downward-only: withholds auto-action from a capability with a
+        # proven poor track record, never grants. Fail-safe — any fault acts as
+        # today. Runs last, so it can only tighten what the gates above allowed.
+        try:
+            damp, reason = _trust_damp_decision(pattern_key)
+            if reason:
+                _LOGGER.debug("autonomy(trust-shadow): %s pattern=%s",
+                              reason, pattern_key)
+            if damp and _autonomy_trust_damper_on():
+                _LOGGER.info("autonomy(trust): withholding auto-action — %s "
+                             "pattern=%s", reason, pattern_key)
+                return False
+        except Exception:  # pragma: no cover - defensive, never block on the damper
+            pass
         return True
 
     def revoke(self, pattern_key: str, *, persist: bool = True) -> bool:
