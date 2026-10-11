@@ -308,15 +308,59 @@ def _live_cognitive(hass=None) -> Optional["agency_state.CognitiveContext"]:
         return None
 
 
+# SHADOW (#237, 9.3.0 — Epistemic Fabric, Provenance): when continuity reads the
+# open situations for its world/continuity view, it also packages each as a
+# kernel.provenance.Provenance (value = "kind:subject", source = the situation
+# kind, observed-at = the situation's updated_ts, durable) and logs the most
+# authoritative one via select_authoritative — observe-only, nothing consumes it.
+# This extends the Provenance primitive's live coverage from curated knowledge
+# (knowledge.all_facts) and recent recognitions (recognition.who_is_where) to the
+# *situation* domain — the "world-model / situation attach" step. Flip
+# PROVENANCE_SHADOW to False to silence it; _live_situations() returns the same
+# rows either way, and the continuity snapshot is unchanged.
+PROVENANCE_SHADOW = True
+
+
+def _emit_situation_provenance_shadow(situations) -> None:
+    """Log the provenance view of the open situations (shadow). Best-effort,
+    never raises — the continuity read is unaffected whether this runs or not."""
+    if not PROVENANCE_SHADOW or not situations:
+        return
+    try:
+        from .kernel import provenance as P
+        recs = []
+        for s in situations:
+            kind = str(getattr(s, "kind", "") or "")
+            subj = getattr(s, "subject", None)
+            value = f"{kind}:{subj}" if subj else (kind or "situation")
+            observed = float(getattr(s, "updated_ts", 0.0) or 0.0)
+            recs.append(P.record(
+                value,
+                source=(f"situation:{kind}" if kind else "situation"),
+                confidence=1.0,                       # a tracked situation is confirmed
+                now=((lambda o=observed: o) if observed else None),
+            ))
+        if recs:
+            best = P.select_authoritative(recs)
+            _LOGGER.debug(
+                "provenance(shadow): %d open-situation record(s); authoritative %s",
+                len(recs), P.summary(best))
+    except Exception:   # pragma: no cover - defensive, observe-only
+        pass
+
+
 def _live_situations(hass=None) -> List[dict]:
     """Open kernel situations as plain capture rows; empty on any failure."""
     try:
         from .kernel.situation import SituationManager
         store = SituationManager(config_path_str("jarvis", "situations.db", hass=hass))
         rows: List[dict] = []
+        sits = []
         for s in store.open_situations():
+            sits.append(s)
             label = s.kind + (f" · {s.subject}" if getattr(s, "subject", None) else "")
             rows.append({"id": s.id, "label": label, "status": s.state})
+        _emit_situation_provenance_shadow(sits)   # #237 (9.3.0): observe-only
         return rows
     except Exception:
         return []

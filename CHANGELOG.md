@@ -1,3 +1,35 @@
+## [9.3.0] — Post-Ω evergreen: `provenance` shadow coverage → the situation domain
+
+The third increment of the #237 trio. Unlike the other two, `provenance` has no
+honest *rung* to climb yet: the knowledge store is `UNIQUE(subject, key)` (one
+record per key, so a selection-divergence parity there is tautological), and the
+only live multi-source surface — presence — is already adjudicated by the
+`conflict` primitive at parity, so a provenance parity there would duplicate it.
+What it can honestly do now is broaden its live *coverage*, the plan's stated
+"world-model / situation attach" step.
+
+**What this lands:**
+- **`provenance` shadow coverage extends to the situation domain.** When
+  `continuity._live_situations()` reads the open kernel situations for its
+  continuity view, it now also packages each as a `kernel.provenance.Provenance`
+  (value `"kind:subject"`, source the situation kind, observed-at the situation's
+  `updated_ts`, durable) and logs the most authoritative one via
+  `select_authoritative`. Observe-only — nothing consumes it, and
+  `_live_situations()` returns the same rows whether it runs or not.
+- This joins the existing provenance shadow surfaces — curated knowledge
+  (`knowledge.all_facts`) and recent recognitions (`recognition.who_is_where`) —
+  so the fabric now attributes *where did this come from* across facts, faces and
+  situations. Kill-switch: `PROVENANCE_SHADOW` in `continuity.py`.
+- **Stays at shadow, deliberately.** A genuine parity/enforce for `provenance`
+  remains deferred until a new multi-source surface exists whose authoritative
+  selection isn't already the `conflict` primitive's job — documented in the
+  adoption matrix rather than faked.
+- **Adoption matrix:** `provenance` gains `continuity` as a live owner (stage
+  unchanged at shadow); Constitution ledger regenerated.
+- **Version** — manifest 9.2.0 → **9.3.0**.
+
+Six kernel gates + audit + docs-sync + changelog-extract green; full suite green.
+
 ## [9.2.0] — Post-Ω evergreen: `outcome` → enforce (owner-authorized M loop)
 
 The second evergreen increment of the #237 trio. `outcome` is a *measurement*

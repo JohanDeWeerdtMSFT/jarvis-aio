@@ -278,9 +278,16 @@ _DECLARED: dict[str, dict] = {
     # packages each recent face recognition it returns (value=name / source=camera /
     # confidence / observed-at / cache-window expiry), logging the authoritative
     # fresh sighting via select_authoritative — observe-only, nothing consumes it
-    # yet (WorldModel.provenances() exposes the same view). Parity vs current reads
-    # next, enforce when a consumer reads it authoritatively.
-    "provenance":   {"stage": "shadow",  "owners": ["knowledge", "recognition"]},
+    # yet (WorldModel.provenances() exposes the same view). SHADOW coverage now
+    # also spans the *situation* domain (9.3.0, the "world-model / situation
+    # attach" step): continuity._live_situations() packages each open situation as
+    # a Provenance (value="kind:subject", source=the kind, observed-at=updated_ts)
+    # and logs the authoritative one. Still observe-only. A genuine divergence-
+    # parity stays deferred: the knowledge store is UNIQUE(subject,key) (one record
+    # per key, so a selection parity there is tautological) and the live multi-
+    # source surface, presence, is already adjudicated by the conflict primitive at
+    # parity — so provenance climbs further only on a new multi-source surface.
+    "provenance":   {"stage": "shadow",  "owners": ["knowledge", "recognition", "continuity"]},
     # uncertainty: first-class "what do I know vs think vs guess" (Epistemic
     # Fabric, audit-added). An Uncertain pairs a value with a confidence, a band
     # (known/believed/guessed/unknown), its basis and what evidence would
