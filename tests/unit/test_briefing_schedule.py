@@ -7,10 +7,16 @@ import pathlib
 import re
 
 COMP = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / "jarvis"
-INIT = (COMP / "__init__.py").read_text()
-WS = (COMP / "websocket.py").read_text()
-BRIEF = (COMP / "briefing.py").read_text()
-PANEL = (COMP / "frontend" / "jarvis-panel.js").read_text()
+
+
+def _read_utf8(path):
+    return path.read_text(encoding="utf-8")
+
+
+INIT = _read_utf8(COMP / "__init__.py")
+WS = _read_utf8(COMP / "websocket.py")
+BRIEF = _read_utf8(COMP / "briefing.py")
+PANEL = _read_utf8(COMP / "frontend" / "jarvis-panel.js")
 
 
 def test_scheduler_uses_clock_time_not_interval():
@@ -92,7 +98,7 @@ def test_briefing_failures_are_logged_visibly():
 def test_hazard_announce_argument_order():
     """async_announce is (hass, text, tts_entity, speakers) — the hazard monitor
     passed (hass, tts, speakers, text), which would speak the wrong thing."""
-    hz = (COMP / "hazard_monitor.py").read_text()
+    hz = _read_utf8(COMP / "hazard_monitor.py")
     assert "async_announce(hass, message, tts, spk" in hz
 
 
@@ -101,8 +107,9 @@ def test_all_announce_callers_pass_text_second():
     as the second positional argument."""
     import re
     bad = []
+    call = r"async_announce\(\s*hass,\s*([A-Za-z_][\w\.\[\]\"']*)"
     for py in COMP.glob("*.py"):
-        for m in re.finditer(r"async_announce\(\s*hass,\s*([A-Za-z_][\w\.\[\]\"']*)", py.read_text()):
+        for m in re.finditer(call, _read_utf8(py)):
             arg = m.group(1)
             # a TTS entity or speaker list in the text slot is the bug signature
             if arg in ("tts", "tts_entity", "spk", "speakers"):

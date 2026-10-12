@@ -1,0 +1,11 @@
+# Direct test tooling and resolved dependencies for the Python 3.13/3.14 suite.
+colorama==0.4.6
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0
+pyflakes==4.0.2
+pytest==9.1.1
+pytest-asyncio==1.4.0
+PyYAML==6.0.3
+voluptuous==0.16.0

@@ -39,6 +39,9 @@ This project holds to senior+ engineering output:
 These are the same checks the `Validate` CI workflow runs on every push:
 
 ```bash
+# In a clean virtual environment, install the pinned unit/audit dependencies.
+python -m pip install -r requirements-test.txt
+
 # Full audit: bytecode compile + relative-import resolution + exported-name checks
 python3 scripts/audit.py
 

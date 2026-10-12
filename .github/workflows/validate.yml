@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest pytest-asyncio pyflakes pyyaml voluptuous
+        run: python -m pip install -r requirements-test.txt
       - name: Audit (compile + imports + names)
         run: python scripts/audit.py
       - name: Kernel adoption (no drift)
@@ -69,6 +69,27 @@ jobs:
         run: python scripts/kernel_certification_check.py --check
       - name: Unit tests
         run: python -m pytest tests/ -q
+
+  safety-gates:
+    name: Safety boundaries (py 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+      - name: Authorization, bootstrap, and retrieval boundary
+        run: >-
+          python -m pytest
+          tests/unit/test_actuation_gate.py
+          tests/unit/test_bootstrap.py
+          tests/unit/test_local_fastpath_gate.py
+          tests/unit/test_run_scene_kernel.py
+          -q
 
   integration:
     name: Integration (real HA lifecycle)
