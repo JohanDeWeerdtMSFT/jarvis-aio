@@ -292,8 +292,8 @@ async def _wait_for_playback(hass, speakers: Sequence[str],
 
 
 async def _start_listening(hass, satellite: str) -> bool:
-    """Open the native mic, or use a separately approved ESPHome endpoint pair."""
-    from .output_dispatch import async_start_satellite, service_succeeded
+    """Open the mic through the fixed native Assist satellite service."""
+    from .output_dispatch import service_succeeded
     try:
         result = await hass.services.async_call(
             "assist_satellite", "start_conversation",
@@ -304,17 +304,7 @@ async def _start_listening(hass, satellite: str) -> bool:
             raise RuntimeError("Native listening service returned failure")
         return True
     except Exception as exc:
-        _LOGGER.debug("JARVIS: voice-confirm satellite prompt failed, trying ESPHome fallback: %s", exc)
-    # Selection alone does not authorize a configurable fallback.
-    esph = _cfg(hass, "satellite_start_action", {})
-    if isinstance(esph, dict) and satellite in esph:
-        try:
-            svc = esph[satellite]  # e.g. "esphome.basement_start_va"
-            result = await async_start_satellite(hass, satellite, svc)
-            return result["ok"]
-        except Exception as exc:
-            _LOGGER.warning("voice_confirm ESPHome start failed: %s", exc)
-    _LOGGER.warning("voice_confirm: no approved fallback could reopen the mic")
+        _LOGGER.warning("JARVIS: native satellite listening failed: %s", exc)
     return False
 
 
@@ -360,7 +350,7 @@ async def ask_followup(hass, question: str, *, turn_context: str = "",
             await _wait_for_playback(hass, speakers)
         if not await _start_listening(hass, satellite):
             return {"ok": False, "mode": "gated", "satellite": satellite,
-                    "error": "Could not start listening through native or approved fallback"}
+                    "error": "Native satellite listening is unavailable"}
         return {"ok": True, "mode": "gated", "satellite": satellite}
     except Exception as exc:
         _LOGGER.warning("voice_confirm.ask_followup failed: %s", exc)

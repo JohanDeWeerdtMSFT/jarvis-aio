@@ -261,22 +261,14 @@ async def test_fixed_persistent_output_preserved_without_push_policy(load, fake_
     assert [call[:2] for call in fake_hass.service_calls] == [("persistent_notification", "create")]
 
 
-@pytest.mark.parametrize("raw", [
-    None, {}, {"assist_satellite.example": ["esphome.other"]},
-    {"assist_satellite.other": ["esphome.example"]},
-    {"assist_satellite.example": "esphome.example"},
-    {"assist_satellite.example": ["script.example"]},
-    {"assist_satellite.example": ["esphome.example\n"]},
-    {"assist_satellite.example": ["esphome.example"], "invalid": []},
-])
-async def test_actual_satellite_fallback_denied_without_exact_valid_pair(
-    load, fake_hass, policy, monkeypatch, raw,
+async def test_native_failure_does_not_call_configured_custom_fallback(
+    load, fake_hass, monkeypatch,
 ):
     voice = load("voice_confirm")
-    policy["satellite_start_service_allowlist"] = raw
-    monkeypatch.setattr(voice, "_cfg", lambda k_h, k, d=None: {
-        "satellite_start_action": {"assist_satellite.example": "esphome.example"},
-    }.get(k, d))
+    monkeypatch.setattr(
+        voice, "_cfg",
+        lambda *args: pytest.fail("listening must not consult configurable fallback"),
+    )
 
     async def fail_native(domain, service, payload, **kwargs):
         fake_hass.service_calls.append((domain, service, payload))
@@ -287,80 +279,44 @@ async def test_actual_satellite_fallback_denied_without_exact_valid_pair(
         ("assist_satellite", "start_conversation")]
 
 
-async def test_satellite_default_deny_makes_zero_configurable_calls(load, fake_hass, policy):
-    result = await load("output_dispatch").async_start_satellite(
-        fake_hass, "assist_satellite.example", "esphome.example")
-    assert not result["ok"]
-    assert fake_hass.service_calls == []
-
-
-async def test_final_output_boundary_rejects_nonempty_satellite_payload(load, fake_hass, policy):
-    policy["satellite_start_service_allowlist"] = {
-        "assist_satellite.example": ["esphome.example"]}
-    result = await load("output_dispatch")._dispatch(
-        fake_hass, "esphome.example", {"entity_id": "all"},
-        satellite="assist_satellite.example")
-    assert not result["ok"]
-    assert fake_hass.service_calls == []
-
-
-@pytest.mark.parametrize(("values", "service", "payload", "satellite"), [
-    ({}, "notify.example", {"message": "Example alert"}, None),
+@pytest.mark.parametrize(("values", "service", "payload"), [
+    ({}, "notify.example", {"message": "Example alert"}),
     ({"notification_service_allowlist": ["notify.example", None]},
-     "notify.example", {"message": "Example alert"}, None),
+     "notify.example", {"message": "Example alert"}),
     ({"notification_service_allowlist": ["notify.example"]},
-     "notify.example", {"message": "command_activity"}, None),
+     "notify.example", {"message": "command_activity"}),
     ({"notification_service_allowlist": ["notify.example"]},
-     "notify.example", {"message": "Example alert", "target": "all"}, None),
-    ({}, "esphome.example", {}, "assist_satellite.example"),
-    ({"satellite_start_service_allowlist": {
-        "assist_satellite.example": ["esphome.example", None]}},
-     "esphome.example", {}, "assist_satellite.example"),
-    ({"satellite_start_service_allowlist": {
-        "assist_satellite.example": ["esphome.example"]}},
-     "script.example", {}, "assist_satellite.example"),
-    ({"satellite_start_service_allowlist": {
-        "assist_satellite.example": ["esphome.example"]}},
-     "esphome.example", {}, "assist_satellite.other"),
+     "notify.example", {"message": "Example alert", "target": "all"}),
 ])
 async def test_direct_guarded_sink_never_grants_authority(
-    load, fake_hass, policy, values, service, payload, satellite,
+    load, fake_hass, policy, values, service, payload,
 ):
     policy.update(values)
     result = await load("output_dispatch")._dispatch(
-        fake_hass, service, payload, satellite=satellite)
+        fake_hass, service, payload)
     assert result["ok"] is False
     assert result["error"]
     assert fake_hass.service_calls == []
 
 
-@pytest.mark.parametrize("fails", [False, True])
-async def test_followup_reports_exact_fallback_outcome(load, fake_hass, policy, monkeypatch, fails):
+async def test_followup_reports_native_listening_failure_without_custom_dispatch(
+    load, fake_hass, monkeypatch,
+):
     voice = load("voice_confirm")
-    policy["satellite_start_service_allowlist"] = {
-        "assist_satellite.example": ["esphome.example"]}
-    monkeypatch.setattr(voice, "_cfg", lambda h, k, d=None: {
-        "satellite_start_action": {"assist_satellite.example": "esphome.example"},
-        "voice_confirm_mode": "gated",
-    }.get(k, d))
+    monkeypatch.setattr(voice, "_mode", lambda h: "gated")
     monkeypatch.setattr(voice, "_satellite_for_entity", lambda *a: "assist_satellite.example")
     monkeypatch.setattr(voice, "_speaker_for_satellite", lambda *a: (None, []))
 
-    async def dispatch(domain, service, payload, **kwargs):
+    async def fail_native(domain, service, payload, **kwargs):
         fake_hass.service_calls.append((domain, service, payload))
         assert kwargs["blocking"] is True
-        if domain == "assist_satellite":
-            raise RuntimeError("native unavailable")
-        assert payload == {}
-        if fails:
-            raise RuntimeError("fallback failed")
-    monkeypatch.setattr(fake_hass.services, "async_call", dispatch)
+        raise RuntimeError("native unavailable")
+    monkeypatch.setattr(fake_hass.services, "async_call", fail_native)
     result = await voice.ask_followup(fake_hass, "Example question")
-    assert result["ok"] is not fails
+    assert result["ok"] is False
+    assert "Native satellite listening is unavailable" in result["error"]
     assert [call[:2] for call in fake_hass.service_calls] == [
-        ("assist_satellite", "start_conversation"), ("esphome", "example")]
-    if fails:
-        assert result["error"]
+        ("assist_satellite", "start_conversation")]
 
 
 async def test_native_satellite_works_without_configurable_authority(load, fake_hass, policy):
@@ -376,7 +332,6 @@ async def test_native_non_success_cannot_report_success_or_authorize_fallback(
     voice = load("voice_confirm")
     monkeypatch.setattr(voice, "_cfg", lambda h, k, d=None: {
         "voice_confirm_mode": "native",
-        "satellite_start_action": {"assist_satellite.example": "esphome.example"},
     }.get(k, d))
     monkeypatch.setattr(voice, "_satellite_for_entity", lambda *a: "assist_satellite.example")
     monkeypatch.setattr(voice, "_speaker_for_satellite", lambda *a: (None, []))
@@ -402,7 +357,5 @@ async def test_unreadable_policy_is_logged_and_denies_without_dispatch(
     output = load("output_dispatch")
     assert not (await output.async_notify(
         fake_hass, "notify.example", {"message": "Example alert"}))["ok"]
-    assert not (await output.async_start_satellite(
-        fake_hass, "assist_satellite.example", "esphome.example"))["ok"]
     assert fake_hass.service_calls == []
     assert "error accessing config" in caplog.text

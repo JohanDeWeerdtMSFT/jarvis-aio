@@ -1,13 +1,10 @@
-"""Bounded output dispatch for configurable notification and ESPHome routes."""
+"""Bounded notification dispatch and Home Assistant result interpretation."""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from .actuation_gate import (
-    notification_service_permitted,
-    satellite_start_service_permitted,
-)
+from .actuation_gate import notification_service_permitted
 
 _LOGGER = logging.getLogger(__name__)
 _NOTIFICATION_DATA_TYPES = {
@@ -46,27 +43,20 @@ def service_succeeded(result: Any) -> bool:
                 and (result.get("ok") is True or result.get("success") is True)))
 
 
-async def _dispatch(hass, service: str, payload: dict, *, satellite: str | None = None) -> dict:
-    if satellite is None:
-        if not notification_service_permitted(service):
-            error = "Notification endpoint is not explicitly authorized"
-        elif not _valid_notification(payload):
-            error = "Notification payload is invalid or contains unsupported commands/targets"
-        else:
-            error = None
-    elif not satellite_start_service_permitted(satellite, service):
-        error = "Satellite/ESPHome endpoint pair is not explicitly authorized"
-    elif not isinstance(payload, dict) or payload:
-        error = "Satellite/ESPHome payload must be empty"
+async def _dispatch(hass, service: str, payload: dict) -> dict:
+    if not notification_service_permitted(service):
+        error = "Notification endpoint is not explicitly authorized"
+    elif not _valid_notification(payload):
+        error = "Notification payload is invalid or contains unsupported commands/targets"
     else:
         error = None
     if error:
         _LOGGER.warning("JARVIS: %s", error)
         return {"ok": False, "error": error}
-    domain, name = service.split(".", 1)
+    name = service.split(".", 1)[1]
     try:
         # Wait for the handler so scheduling a failed call is not reported as delivery.
-        result = await hass.services.async_call(domain, name, payload, blocking=True)
+        result = await hass.services.async_call("notify", name, payload, blocking=True)
     except Exception as exc:
         error = f"Output service {service} failed: {exc}"
         _LOGGER.warning(error)
@@ -81,11 +71,6 @@ async def _dispatch(hass, service: str, payload: dict, *, satellite: str | None 
 async def async_notify(hass, service: str, payload: dict) -> dict:
     """Send only approved endpoint notifications with bounded display metadata."""
     return await _dispatch(hass, service, payload)
-
-
-async def async_start_satellite(hass, satellite: str, service: str) -> dict:
-    """Dispatch only an approved pair with an empty, non-expandable payload."""
-    return await _dispatch(hass, service, {}, satellite=satellite)
 
 
 async def async_test_notify(hass, service: str) -> None:

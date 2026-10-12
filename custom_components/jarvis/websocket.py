@@ -1475,7 +1475,6 @@ PANEL_WRITABLE_KEYS = {
     "voice_confirm_mode",         # str: native | gated | auto
     "voice_confirm_entities",     # list: extra entities to confirm / !exempt
     "satellite_audio_out",        # dict/bool: satellites whose audio routes out
-    "satellite_start_action",     # dict: satellite → esphome start action
     "intrusion_response_timeout", # float: secs before unanswered alert escalates
     "onboarding_dismissed",       # bool: user dismissed the first-run welcome card
     "friday_automator",           # bool: enable the FRIDAY actuating sub-agent (off by default; v7.96.0)

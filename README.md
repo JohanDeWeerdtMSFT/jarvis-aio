@@ -184,36 +184,30 @@ Routine execution is disabled by default: `routine_execution_enabled` must be th
 
 After a recognized web/mail/document/calendar/camera or delegation tool returns, subsequent control calls are refused within that reasoning loop. This is not cross-turn provenance protection: history, initial context and other retrieval surfaces are not comprehensively classified, and the alternate conversation loop only filters advertised API tools, not returned calls at dispatch. Fixed audio/maintenance subsystems still call services directly and need separate target/side-effect review. Switches or helpers can trigger security-sensitive automations, and closing/arming actions are not universally harmless. Keep this candidate in an isolated test environment until these boundaries and end-to-end retrieval/alias/area tests are addressed.
 
-**Configurable output migration (draft #4).** Selecting `notify_service`, discovering a `mobile_app_*` name, or mapping `satellite_start_action` no longer authorizes dispatch. Both independent policies default to empty. An owner must review the actual endpoint implementation and downstream effects, then enumerate exact endpoints in JARVIS's `config.json` (normally `/config/jarvis/config.json`); the panel selectors do not write these authorization policies. Names, prompts and LLM input are not evidence that an endpoint only displays a notification or starts listening.
+**Configurable output migration (draft #4).** Selecting `notify_service` or discovering a `mobile_app_*` name does not authorize notification dispatch; the exact `notification_service_allowlist` defaults to empty. An owner must review the actual endpoint implementation and downstream effects, then enumerate exact notification endpoints in JARVIS's `config.json` (normally `/config/jarvis/config.json`); the panel selector does not write this authorization policy. Names, prompts and LLM input are not evidence that an endpoint only displays a notification. Custom ESPHome microphone-start fallback is disabled; legacy `satellite_start_action` settings are ignored. Voice follow-up uses the fixed native Assist satellite path and reports an error if it cannot start.
 
 ```json
 {
   "notify_service": "notify.example_phone",
-  "notification_service_allowlist": ["notify.example_phone"],
-  "satellite_start_action": {
-    "assist_satellite.example": "esphome.example_start"
-  },
-  "satellite_start_service_allowlist": {
-    "assist_satellite.example": ["esphome.example_start"]
-  }
+  "notification_service_allowlist": ["notify.example_phone"]
 }
 ```
 
-These are placeholders, not suggested household endpoints. Notification policy accepts exact `notify.<service>` names only; wrong domains, wildcards, newlines and malformed entries deny the whole list. Generic broadcast `notify.notify` and target-based `notify.send_message` are unavailable, even if listed. Satellite policy requires exact `assist_satellite.<entity>` to `esphome.<service>` pairs; any malformed entry denies all pairs. Fallback uses **only `{}`**, never supplied targets or action data. A denied native fallback does not authorize another endpoint.
+This is a placeholder, not a suggested household endpoint. Notification policy accepts exact `notify.<service>` names only; wrong domains, wildcards, newlines and malformed entries deny the whole list. Generic broadcast `notify.notify` and target-based `notify.send_message` are unavailable, even if listed. The notification sink always dispatches in the literal `notify` domain after authorization.
 
-Notification payloads contain only `message`, optional `title`, and optional display metadata: `image`, `attachment.url`, `car_ui`, `channel`, `importance`, integer `ttl`, and `priority`. Target expansion and companion-app `command_*` messages are rejected. Configurable dispatch waits for the HA service handler; exceptions and explicit/non-success results are logged and returned as failures, without automatic retry to an unapproved endpoint. Handler completion is not proof of phone receipt or of the endpoint's physical behavior. `jarvis.test_notify` raises an HA service error on denial/failure; voice follow-up returns `ok: false` if native and approved fallback listening fail.
+Notification payloads contain only `message`, optional `title`, and optional display metadata: `image`, `attachment.url`, `car_ui`, `channel`, `importance`, integer `ttl`, and `priority`. Target expansion and companion-app `command_*` messages are rejected. Configurable dispatch waits for the HA service handler; exceptions and explicit/non-success results are logged and returned as failures, without automatic retry to an unapproved endpoint. Handler completion is not proof of phone receipt or of the endpoint's physical behavior. `jarvis.test_notify` raises an HA service error on denial/failure; voice follow-up returns `ok: false` if native listening fails.
 
 | Dispatch inventory for this bounded output slice | Boundary / exception |
 | --- | --- |
 | `sentinel._announce_rule`, `observer._send_notification`, appliance `_announce_done` notify-only branch | Configured selector passes shared exact notification gate; denied/failed delivery is logged |
 | Cognitive `_push_notification`, proactive briefing `_push_to_phone`, HA `test_notify` handler | Same gate; returned failure, with HA service exception for the diagnostic |
 | Cognitive `_notify_all_devices` discovery and single-endpoint fallback | Every discovered endpoint is checked separately; failure never grants fallback authority |
-| Voice `_start_listening` ESPHome fallback | Exact independently approved satellite/service pair, empty payload; follow-up checks outcome |
-| Fixed `tts.speak`, `media_player.volume_set`, native `assist_satellite.ask_question/start_conversation/announce`, `persistent_notification.create` | Existing output exceptions preserved, **not** claimed universally authorized or physically harmless |
+| Voice `_start_listening` and `ask_followup` | Fixed native `assist_satellite.start_conversation`; no configurable custom-service fallback; failures are reported |
+| Fixed `tts.speak`, `media_player.volume_set`, native `assist_satellite.ask_question/start_conversation/announce`, `persistent_notification.create` | Existing fixed output paths preserved, **not** claimed universally authorized or physically harmless |
 
 **Setup/validation:** review endpoints outside the LLM/panel selection path, merge only the approved placeholder-shaped policies into the existing config, and reload the integration so the cached file is reread. Test in an isolated HA instance with `jarvis.test_notify`; missing/unapproved policy must fail without dispatch. Repository regression command: `python -m pytest tests/unit/test_output_dispatch.py tests/unit/test_voice_confirm.py -q` (PowerShell: set `$env:PYTHONUTF8='1'` first). No live validation was performed for this draft.
 
-**Rollback:** to revoke outputs, clear both authorization policies and reload; also remove obsolete selectors if the endpoints are no longer intended. Removing this patch instead restores legacy arbitrary configured-service dispatch and automatic discovered-device delivery; remove selectors/mappings before reverting. Clearing policy cannot undo notifications or physical effects already triggered. Explicitly approved ESPHome/custom notification endpoints can still operate hardware internally: review that blast radius separately, and do not interpret this configuration hardening as full #4 acceptance.
+**Rollback:** to revoke configurable notifications, clear `notification_service_allowlist` and reload; fixed native Assist, TTS, and persistent-notification paths are separate. Reverting the custom ESPHome removal re-enables microphone-start fallback for exact satellite/service pairs in the separate `satellite_start_service_allowlist`; clear that allowlist and remove obsolete selectors before rollback if fallback must stay disabled. Approved endpoints may still produce physical effects, which policy removal cannot undo. Review the downstream blast radius of each approved notification endpoint; this configuration hardening is not full #4 authorization coverage.
 
 **Automation installation is disabled (draft #4).** JARVIS never writes or replaces `automations.yaml` or calls `automation.reload` when asked to create an automation. The shared creator denies at entry, before input normalization, config-path lookup or executor/file work; the old writer/reload implementation has been removed. There is no boolean, entity/service allowlist, alias, suggestion approval or panel setting that re-enables installation. `jarvis.create_automation` raises an HA service error instead of reporting successful completion.
 

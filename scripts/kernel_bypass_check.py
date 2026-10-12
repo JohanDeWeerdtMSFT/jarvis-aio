@@ -23,8 +23,8 @@ Classification (a call is allowed iff one holds):
     automation.reload);
   * it is a literal ``media_player`` **playback** service (TTS / announcements);
   * its (file, function) is in ``_ALLOWED_SITES`` with a documented reason
-    (dynamic-domain notify, the execute_plan kernel-planner step, the seam's
-    verify-after-act retry, the generic user-authored routine runner).
+    (the execute_plan kernel-planner step, the seam's verify-after-act retry,
+    or a TTS announcement pipeline operation).
 
 Pure stdlib; no Home Assistant import. Run ``--check`` in CI; bare run lists every
 call and its classification.
@@ -50,11 +50,10 @@ _READONLY_META = frozenset({
 # media_player services that are playback/announcement (TTS), not device control
 _MEDIA_PLAYBACK = frozenset({"play_media", "media_play", "media_stop"})
 
-# ── sites that are not literal-communication yet are legitimately not a bypass ─
+# ── nonliteral-communication sites with a narrowly documented justification ───
 # Keyed (filename, enclosing-function) → reason. Each is either the seam's own
-# machinery or a dynamic-domain communication/macro path that cannot change a
-# device on its own. A NEW direct world-mutating call in a new location is NOT
-# here, so it fails the gate until seam-routed or classified.
+# machinery or part of the fixed TTS announcement pipeline. Configurable
+# notifications use a literal notify domain and need no site exemption.
 _ALLOWED_SITES: dict[tuple[str, str], str] = {
     # execute_plan expresses each step as a kernel Plan and runs it via
     # aexecute_plan; this closure is that plan's execution step (Phase B4) — the
@@ -63,11 +62,6 @@ _ALLOWED_SITES: dict[tuple[str, str], str] = {
     # verify-after-act: _verify_control re-issues the SAME canonical action once
     # as part of the seam's verification step (control_device/H1).
     ("agent.py", "_verify_control"): "seam verify-after-act retry (H1)",
-    # Replaces the legacy raw routine/notify/ESPHome exemptions: routines now
-    # use the actuator seam; configurable outputs converge here. Entry validates
-    # independent exact endpoint policy and bounded notification/empty ESPHome
-    # payloads. This is a reviewed-output exception, not proof of physical safety.
-    ("output_dispatch.py", "_dispatch"): "exact-policy output boundary (default deny, bounded payload)",
     # tts / announcement playback through dynamic service names (jarvis.speak).
     ("proactive_audio.py", "_run_audit"): "jarvis.speak announcement (communication)",
     # the TTS announcement pipeline sets the target speaker's volume before
