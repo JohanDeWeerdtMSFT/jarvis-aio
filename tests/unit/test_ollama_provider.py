@@ -27,7 +27,14 @@ def test_vanilla_openai_sends_no_extra_body(llm):
     ("http://haos.local:11434", "http://haos.local:11434/v1"),
     ("http://haos.local:11434/", "http://haos.local:11434/v1"),
     ("http://haos.local:11434/v1", "http://haos.local:11434/v1"),  # already pathed
-    ("http://x:8080", "http://x:8080"),                            # not ollama's port
+    # Any path-less base URL gains /v1 — Ollama's OpenAI-compatible API always
+    # lives under /v1, so a reverse proxy on another port or host needs it too
+    # (issue #383 follow-up). Previously only a bare :11434 was handled, leaving a
+    # proxied endpoint pointing at the wrong path.
+    ("http://x:8080", "http://x:8080/v1"),
+    ("https://ollama.example.com", "https://ollama.example.com/v1"),
+    # A URL that already carries a path (a deliberate proxy subpath) is untouched.
+    ("https://host.tld/ollama", "https://host.tld/ollama"),
     (None, None),
 ])
 def test_ollama_url_normalization(llm, inp, out):
