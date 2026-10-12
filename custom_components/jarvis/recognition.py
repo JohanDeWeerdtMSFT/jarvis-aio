@@ -109,14 +109,15 @@ _persist_loaded = False
 _persist_last_save = 0.0
 
 
-def _persist_save(force: bool = False) -> None:
-    """Persist the recognition cache + snapshot index to disk (throttled, atomic).
-    Never raises."""
+def _persist_build(force: bool = False):
+    """Snapshot the in-memory caches into a JSON-ready payload, applying the write
+    throttle. Fast and loop-safe — reads the live caches, does no I/O; returns the
+    payload to write, or ``None`` when throttled. Never raises."""
     global _persist_last_save
     try:
         now = _time.time()
         if not force and (now - _persist_last_save) < _PERSIST_SAVE_THROTTLE:
-            return
+            return None
         _persist_last_save = now
         recs = {}
         for cam, rec in list(_RECOGNITION_CACHE.items()):
@@ -137,7 +138,18 @@ def _persist_save(force: bool = False) -> None:
                 "ts": snap.get("ts", 0.0),
                 "camera_entity": snap.get("camera_entity", ""),
             }
-        payload = {"recognitions": recs, "snapshots": snaps}
+        return {"recognitions": recs, "snapshots": snaps}
+    except Exception as exc:
+        _LOGGER.debug("recognition cache snapshot failed: %s", exc)
+        return None
+
+
+def _persist_write(payload) -> None:
+    """Atomically write a payload built by :func:`_persist_build`. BLOCKING file
+    I/O — must run on the executor, never on the event loop. Never raises."""
+    if not payload:
+        return
+    try:
         os.makedirs(os.path.dirname(RECOG_CACHE_PATH), exist_ok=True)
         tmp = RECOG_CACHE_PATH + ".tmp"
         with open(tmp, "w") as f:
@@ -145,6 +157,47 @@ def _persist_save(force: bool = False) -> None:
         os.replace(tmp, RECOG_CACHE_PATH)
     except Exception as exc:
         _LOGGER.debug("recognition cache persist failed: %s", exc)
+
+
+def _persist_save(force: bool = False) -> None:
+    """Build + write the cache inline (blocking). ONLY for sync / off-loop callers
+    (tests, the executor); on the event loop use :func:`_persist`, which offloads
+    the disk write. Never raises."""
+    _persist_write(_persist_build(force=force))
+
+
+def _persist(hass=None, force: bool = False) -> None:
+    """Persist the caches without ever blocking the event loop.
+
+    HA flags a blocking ``open`` on the loop (this path is reached from an MQTT
+    message on MainThread — see issue tracker). So the payload is snapshotted
+    synchronously (fast, and a consistent view of the live caches) and, when
+    ``hass`` is available, the blocking write is handed to the executor; sync
+    callers with no ``hass`` (tests) fall back to an inline write. The throttle is
+    applied during the snapshot, so a throttled call schedules nothing.
+    Best-effort; never raises."""
+    try:
+        payload = _persist_build(force=force)
+        if not payload:
+            return
+        if hass is not None:
+            hass.async_add_executor_job(_persist_write, payload)
+            return
+        _persist_write(payload)
+    except Exception as exc:
+        _LOGGER.debug("recognition cache persist schedule failed: %s", exc)
+
+
+async def _persist_async(hass, force: bool = False) -> None:
+    """Loop-safe persist for ``async`` callers: snapshot on the loop, then *await*
+    the blocking write on the executor. Same effect as :func:`_persist` with a
+    ``hass``, but awaited so there's no dangling job. Best-effort; never raises."""
+    try:
+        payload = _persist_build(force=force)
+        if payload:
+            await hass.async_add_executor_job(_persist_write, payload)
+    except Exception as exc:
+        _LOGGER.debug("recognition cache async persist failed: %s", exc)
 
 
 def _persist_load() -> None:
@@ -325,8 +378,10 @@ def _camera_entity_from_name(camera_name: str) -> str:
     return f"camera.{camera_name.lower()}"
 
 
-def remember_recognition(camera_name: str, name: str, confidence: float) -> None:
-    """Store a recognition event in the in-memory cache."""
+def remember_recognition(camera_name: str, name: str, confidence: float, hass=None) -> None:
+    """Store a recognition event in the in-memory cache. Pass ``hass`` (the live
+    MQTT callers all have it) so the disk persist runs on the executor instead of
+    blocking the event loop; sync / test callers may omit it for an inline write."""
     entity_id = _camera_entity_from_name(camera_name)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     prev = _RECOGNITION_CACHE.get(entity_id, {})
@@ -339,7 +394,7 @@ def remember_recognition(camera_name: str, name: str, confidence: float) -> None
     # Persist so the Faces panel survives a restart (#331). Fresh and untagged —
     # this overwrites any restored entry for the camera, so normal intrusion
     # stand-down behaviour resumes the moment a real sighting lands.
-    _persist_save()
+    _persist(hass)
 
 
 def _face_norm(name: str) -> str:
@@ -429,7 +484,7 @@ async def capture_face_snapshot(hass, camera: str, name: str) -> Optional[dict]:
             "camera_entity": camera_entity,
         }
         _FACE_SNAPSHOTS[key] = rec
-        _persist_save()   # keep the pinned-snapshot index across restarts (#331)
+        await _persist_async(hass)   # keep the pinned-snapshot index across restarts (#331)
         _LOGGER.info("JARVIS: pinned face snapshot for %s from %s", name, camera_entity)
         return rec
     except Exception as exc:
@@ -893,7 +948,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
         name = match.get("name", "unknown")
         confidence = float(match.get("confidence", 0))
 
-        remember_recognition(camera, name, confidence)
+        remember_recognition(camera, name, confidence, hass=hass)
         _schedule_face_capture(hass, camera, name, confidence)
 
         # Fire a custom event that automations/blueprints can use
@@ -996,7 +1051,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
                     sub = after.get("sub_label")
                     sub_name, sub_conf = _parse_sub_label(sub)
                     if sub_name:
-                        remember_recognition(camera, sub_name, sub_conf)
+                        remember_recognition(camera, sub_name, sub_conf, hass=hass)
                         _schedule_face_capture(hass, camera, sub_name, sub_conf)
                         hass.bus.async_fire("jarvis_face_recognized", {
                             "camera": camera,
@@ -1042,7 +1097,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
                     conf = _normalize_score(payload.get("score"))
                     is_unknown = name.lower() in ("unknown", "unknown person")
                     if camera:
-                        remember_recognition(camera, name, conf)
+                        remember_recognition(camera, name, conf, hass=hass)
                         _schedule_face_capture(hass, camera, name, conf)
                     hass.bus.async_fire("jarvis_face_recognized", {
                         "camera": camera,

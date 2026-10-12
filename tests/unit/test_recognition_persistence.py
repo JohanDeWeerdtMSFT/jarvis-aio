@@ -136,3 +136,40 @@ def test_remember_recognition_persists(recog):
     _reset()
     mod._persist_load()
     assert mod._RECOGNITION_CACHE.get("camera.front_door", {}).get("name") == "Sam"
+
+
+# ── loop safety: the live MQTT path must not block the event loop on disk I/O ───
+def test_remember_recognition_offloads_write_when_hass_given(recog):
+    """HA flagged a blocking ``open`` on the event loop from the MQTT face path
+    (``remember_recognition`` → persist, seen in a user log). With ``hass`` the
+    disk write must be handed to the executor, not run inline on the loop — while
+    the data still round-trips."""
+    mod, _fr, _tmp, _reset = recog
+
+    ran = []
+
+    class _LoopHass:
+        # Mirrors real HA: submits the job to the executor and returns immediately.
+        # Here we record the hand-off and run it inline so the round-trip holds.
+        def async_add_executor_job(self, func, *args):
+            ran.append(func.__name__)
+            func(*args)
+
+    mod.remember_recognition("front_door", "Sam", 92.0, hass=_LoopHass())
+    assert ran == ["_persist_write"]   # offloaded, never an inline open() on the loop
+
+    _reset()
+    mod._persist_load()
+    assert mod._RECOGNITION_CACHE.get("camera.front_door", {}).get("name") == "Sam"
+
+
+def test_persist_without_hass_writes_inline(recog):
+    """Sync / test callers with no ``hass`` fall back to an inline write (the tests
+    above rely on this, and there is no loop to offload onto)."""
+    mod, _fr, _tmp, _reset = recog
+    mod._RECOGNITION_CACHE["camera.front_door"] = {
+        "name": "Sam", "confidence": 90.0, "ts": _now(), "unknown_count": 0}
+    mod._persist(force=True)          # hass=None → inline
+    _reset()
+    mod._persist_load()
+    assert mod._RECOGNITION_CACHE.get("camera.front_door", {}).get("name") == "Sam"

@@ -1,3 +1,38 @@
+## [9.17.0] — Fix: face-recognition cache write no longer blocks the event loop
+
+Home Assistant's blocking-call detector flagged JARVIS in a user log:
+
+```
+Detected blocking call to open with args ('/config/jarvis/recognition_cache.json.tmp', 'w')
+inside the event loop by custom integration 'jarvis' at
+custom_components/jarvis/recognition.py, line 143
+```
+
+Root cause: a Frigate face recognition arrives over MQTT on the event loop
+(`_tracked_update_handler` → `remember_recognition` → persist), and the persist
+opened and wrote the recognition-cache JSON **synchronously on the loop**. On a
+busy instance a disk stall there stalls everything — the same reliability class as
+the camera→LLM freeze fixed in 9.15.0 (#378). The pinned-snapshot index persist in
+`capture_face_snapshot` had the identical on-loop write.
+
+**Fix (reliability hardening — no behaviour change):**
+- The persist is split into a fast, loop-safe **snapshot** of the in-memory caches
+  (`_persist_build`, applies the write throttle) and the **blocking write**
+  (`_persist_write`). The live MQTT/callback callers now snapshot on the loop and
+  hand the write to the **executor** (`_persist`, given `hass`), so the event loop
+  never touches disk.
+- Sync / test callers with no `hass` keep writing inline; `_persist_save(force=…)`
+  is retained for them. The write throttle and the atomic temp-file replace are
+  unchanged, and the whole path stays best-effort (never raises into the caller).
+- The **load** path was already off-loop (`warm_start` runs on the executor; the
+  guarded `recent_faces` reload is a no-op after it), so only the write needed
+  moving.
+
+- **Tests** cover the off-loop hand-off (with `hass`, the write is routed through
+  the executor, not an inline `open()` on the loop) and the inline fallback (no
+  `hass`), alongside the existing round-trip/age-out/idempotence suite.
+- **Version** — manifest 9.16.0 → **9.17.0**.
+
 ## [9.16.0] — Persist the authority-enforce parity tally across restarts (enforce-flip Step A.5)
 
 Makes the enforce-allowlist-widening decision (Step B) trustworthy. The
