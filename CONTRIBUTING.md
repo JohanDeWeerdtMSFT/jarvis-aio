@@ -66,6 +66,24 @@ ActuatorOutcome → actuation `JarvisEvent` → one-step `Plan`) and declare it 
 path; a read-only or bookkeeping tool goes in the allowlist with a one-line
 rationale. See `KERNEL_COVERAGE.md` and `KERNEL_ADOPTION.md`.
 
+## Versioning
+
+JARVIS uses semantic versioning — `MAJOR.MINOR.PATCH` — and the digit is chosen by
+the **nature** of the change, not its size:
+
+- **PATCH** (`x.y.Z`) — a bug fix, or an internal / reliability change with no new
+  user-facing capability. Most changes land here. A one-line fix is still a PATCH.
+  _e.g._ `9.18.0` → `9.18.1`.
+- **MINOR** (`x.Y.z`) — a new, backward-compatible user-facing capability (a new
+  tool, panel feature, config option). A small-but-genuinely-new feature is a MINOR.
+  _e.g._ `9.18.x` → `9.19.0`.
+- **MAJOR** (`X.y.z`) — a breaking change to config, stored data, APIs, or behaviour
+  users rely on. _e.g._ `9.x.x` → `10.0.0`.
+
+A change that doesn't affect the shipped integration (contributor docs, CI, repo
+meta) takes **no version bump** — `release.yml` only cuts a release when the
+manifest version changes, so there's nothing to publish.
+
 ## Releasing
 
 Bump the version everywhere it appears with one command:
