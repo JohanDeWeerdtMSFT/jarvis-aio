@@ -440,10 +440,25 @@ class OllamaProvider(OpenAIProvider):
 
     @staticmethod
     def _normalize_url(base_url: Optional[str]) -> Optional[str]:
-        # Accept a bare host:port and append Ollama's OpenAI-compatible path
-        # (…:11434 → …:11434/v1) so the endpoint is correct either way.
-        if base_url and base_url.rstrip("/").endswith(":11434"):
-            return base_url.rstrip("/") + "/v1"
+        # Ollama's OpenAI-compatible API lives under ``/v1``. Accept a base URL
+        # that omits it — a bare ``host:port`` (…:11434), or a reverse-proxy
+        # origin on any port/host with no path (https://ollama.example.com) — and
+        # append ``/v1`` so the endpoint is correct. A URL that already carries a
+        # path (…/v1, or a proxy subpath like …/ollama) is left untouched, so a
+        # deliberate custom path is never clobbered.
+        if not base_url:
+            return base_url
+        trimmed = base_url.strip().rstrip("/")
+        if not trimmed:
+            return base_url
+        try:
+            from urllib.parse import urlsplit
+            to_parse = trimmed if "://" in trimmed else "http://" + trimmed
+            path = urlsplit(to_parse).path or ""
+        except Exception:
+            path = ""
+        if path in ("", "/"):
+            return trimmed + "/v1"
         return base_url
 
     def _extra_body(self, thinking: Optional[bool] = None) -> dict:
@@ -1162,6 +1177,8 @@ async def test_connection(hass, provider, api_key, model, base_url):
     (issue #383). So for Ollama we list the server's models instead, which proves
     it answers without needing any particular model pulled.
     """
+    provider = (provider or "").strip().lower()
+
     def _ping():
         client = create_provider(provider, api_key, model, base_url or None)
         if client is None:
