@@ -245,6 +245,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     sched.add("event-ledger-flush", 30, _flush_event_ledger)
 
+    # ── Authority parity tally persistence (Step A.5) ────────────────────────
+    # The engine-vs-gate agreement tally lives in hass.data and otherwise resets
+    # on every restart, wiping the evidence the enforce-allowlist widening relies
+    # on. Load it at setup and flush it off-loop on a scheduler tick (and on
+    # unload) so it accrues across restarts and updates. Best-effort, drives
+    # nothing — a failure here never touches the authoritative actuator path.
+    from . import authority_bridge as _authority_bridge
+    await hass.async_add_executor_job(_authority_bridge.load_parity, hass)
+
+    async def _save_authority_parity(now=None):
+        await hass.async_add_executor_job(_authority_bridge.save_parity, hass)
+
+    sched.add("authority-parity-save", 300, _save_authority_parity)
+
     # ── Continuity of self (roadmap Phase I, I2 — shadow) ───────────────────
     # Log what JARVIS was in the middle of before this restart (active goals,
     # open situations, mode), then capture a fresh agency snapshot periodically
@@ -932,6 +946,15 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload JARVIS."""
     data = hass.data[DOMAIN].get(entry.entry_id, {})
+
+    # Persist the authority parity tally one last time on a clean unload/reload
+    # (Step A.5) so the agreement evidence survives. Best-effort — never blocks
+    # or fails the unload.
+    try:
+        from . import authority_bridge as _authority_bridge
+        await hass.async_add_executor_job(_authority_bridge.save_parity, hass)
+    except Exception:
+        pass
 
     # Unregister the panel early — best effort
     try:
