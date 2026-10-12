@@ -38,6 +38,9 @@ This project holds to senior+ engineering output:
 
 These are the same checks the `Validate` CI workflow runs on every push:
 
+On Windows, set `PYTHONUTF8=1` before running the checks to match CI's UTF-8
+text handling (in PowerShell: `$env:PYTHONUTF8 = '1'`).
+
 ```bash
 # In a clean virtual environment, install the pinned unit/audit dependencies.
 python -m pip install -r requirements-test.txt
