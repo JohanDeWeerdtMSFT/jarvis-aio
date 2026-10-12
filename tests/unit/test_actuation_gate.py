@@ -157,17 +157,190 @@ def test_tool_name_trailing_newline_denied(gate, cfg):
     "switch.garage_door_relay", "switch.front_gate", "switch.door_deadbolt",
     "switch.basement_heater", "switch.pool_pump", "switch.water_valve",
     "input_boolean.siren_enabled", "input_boolean.security_override",
+    "switch.living_room_lamp", "switch.relay_1", "input_boolean.guest_mode",
 ])
 def test_hazardous_switch_denied_without_allowlist(gate, cfg, entity_id):
     dom = entity_id.split(".")[0]
     assert _call(gate, dom, "turn_on", entity_id) is False
     cfg["actuation_allowlist"] = [entity_id]
+    assert _call(gate, dom, "turn_on", entity_id) is False
+    cfg["actuation_service_allowlist"] = {entity_id: [f"{dom}.turn_on"]}
     assert _call(gate, dom, "turn_on", entity_id) is True
+    assert _call(gate, dom, "turn_off", entity_id) is False
+    assert _call(gate, dom, "toggle", entity_id) is False
 
 
-def test_neutral_switch_allowed_by_default(gate, cfg):
-    assert _call(gate, "switch", "turn_on", "switch.living_room_lamp") is True
-    assert _call(gate, "input_boolean", "turn_on", "input_boolean.guest_mode") is True
+@pytest.mark.parametrize("bad", [
+    ["switch.relay_1"], {"switch.*": ["switch.turn_on"]},
+    {"switch.relay_1": "switch.turn_on"},
+    {"switch.relay_1": ["switch.turn_on", "switch.reload"]},
+    {"switch.relay_1": ["input_boolean.turn_on"]},
+    {"switch.relay_1\n": ["switch.turn_on"]},
+    {"switch.relay_1": ["switch.turn_on"], "switch.other": [None]},
+])
+def test_malformed_switch_policy_denies_all_pairs(gate, cfg, bad):
+    cfg["actuation_service_allowlist"] = bad
+    assert not _call(gate, "switch", "turn_on", "switch.relay_1")
+
+
+async def test_switch_names_and_attributes_cannot_authorize(act, cfg):
+    hass = FakeHass()
+    for entity in ("switch.relay_1", "switch.gate_heater_pump"):
+        hass.states.set(entity, "off", friendly_name="Harmless lamp",
+                        device_class="outlet")
+        ok, detail = await act.execute_actuator(
+            hass, capability="switch.turn_on", entity_id=entity,
+            domain="switch", service="turn_on", data={"entity_id": entity})
+        assert not ok and "authorization" in detail
+    assert hass.service_calls == []
+    cfg["actuation_service_allowlist"] = {"switch.relay_1": ["switch.turn_on"]}
+    for domain, entity in (("switch", "switch.relay_1"), ("light", "light.lamp")):
+        hass.states.set(entity, "off")
+        ok, _ = await act.execute_actuator(
+            hass, capability=f"{domain}.turn_on", entity_id=entity,
+            domain=domain, service="turn_on", data={"entity_id": entity})
+        assert ok
+    assert hass.service_calls == [
+        ("switch", "turn_on", {"entity_id": "switch.relay_1"}),
+        ("light", "turn_on", {"entity_id": "light.lamp"}),
+    ]
+
+
+@pytest.fixture
+def routines(load, cfg, monkeypatch):
+    mod = load("routines")
+    cfg["routine_execution_enabled"] = True
+
+    async def announce(hass, *args):
+        await hass.services.async_call("tts", "speak", {"message": "feedback"})
+
+    monkeypatch.setattr(mod, "async_announce", announce)
+    return mod
+
+
+@pytest.mark.parametrize("enabled", [None, False, "true", 1, [], {"enabled": True}])
+async def test_disabled_routines_never_load_or_dispatch(
+        routines, cfg, monkeypatch, enabled):
+    cfg["routine_execution_enabled"] = enabled
+
+    def forbidden_load():
+        pytest.fail("disabled routines must not load steps")
+
+    monkeypatch.setattr(routines, "_load_routines", forbidden_load)
+    hass = FakeHass()
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={"name": "example"}), "", "tts.example",
+        ["media_player.example"])
+    assert out["error"] == "routine_execution_disabled"
+    assert not out["success"] and out["steps_executed"] == 0
+    assert hass.service_calls == []
+
+
+async def test_routine_execution_disabled_when_flag_absent(routines, cfg):
+    cfg.pop("routine_execution_enabled")
+    hass = FakeHass()
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={}), "", None, [])
+    assert out["error"] == "routine_execution_disabled"
+    assert hass.service_calls == []
+
+
+async def test_routine_config_error_disables_without_calls(
+        routines, load, monkeypatch, caplog):
+    def unreadable(*args):
+        raise OSError("config unavailable")
+
+    monkeypatch.setattr(load("jarvis_config"), "get", unreadable)
+    hass = FakeHass()
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={}), "", None, [])
+    assert out["error"] == "routine_execution_disabled"
+    assert hass.service_calls == []
+    assert "config unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("step", [
+    {"service": "switch.turn_on", "target": {"entity_id": "switch.relay_1"}},
+    {"service": "script.turn_on", "data": {"entity_id": "script.example"}},
+    {"service": "scene.turn_on", "data": {"entity_id": "scene.example"}},
+    {"service": "automation.trigger", "data": {"entity_id": "automation.example"}},
+    {"service": "lock.unlock", "data": {"entity_id": "lock.example"}},
+    {"service": "light.turn_on", "target": {"entity_id": "all"}},
+    {"service": "light.turn_on", "target": {"entity_id": ["light.a", "light.b"]}},
+    {"service": "light.turn_on", "target": {"area_id": "room"}},
+    {"service": "light.turn_on", "target": {"device_class": "shade"}},
+    {"service": "light.turn_on", "data": {"entity_id": "light.a"},
+     "target": {"entity_id": "light.b"}},
+    {"service": "light.turn_on"},
+    {"service": "light.turn_on", "data": []},
+    {"service": "light.turn_on", "target": None},
+])
+async def test_routine_preflight_denies_without_any_dispatch(
+        routines, monkeypatch, step):
+    step = {**step, "optional": True, "announce": "Done"}
+    monkeypatch.setattr(routines, "_load_routines", lambda: {"example": [
+        {"service": "light.turn_on", "target": {"entity_id": "light.lamp"}},
+        step, {"announce": "All done"},
+    ]})
+    hass = FakeHass()
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={"name": "example"}), "", None, [])
+    assert not out["success"] and out["steps_executed"] == 0 and out["errors"]
+    assert hass.service_calls == []
+
+
+@pytest.mark.parametrize("name", ["goodnight", "goodmorning", "leaving", "arriving"])
+async def test_default_routines_make_zero_calls(routines, name):
+    hass = FakeHass()
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={"name": name}), "", None, [])
+    assert not out["success"]
+    assert hass.service_calls == []
+
+
+async def test_routine_authorized_controls_and_failure_feedback(
+        routines, cfg, monkeypatch):
+    cfg["actuation_service_allowlist"] = {"switch.relay_1": ["switch.turn_on"]}
+    monkeypatch.setattr(routines, "_load_routines", lambda: {"example": [
+        {"service": "light.turn_on", "target": {"entity_id": "light.lamp"}},
+        {"service": "switch.turn_on", "data": {"entity_id": "switch.relay_1"}},
+    ]})
+    hass = FakeHass()
+    hass.states.set("light.lamp", "off")
+    hass.states.set("switch.relay_1", "off")
+    call = types.SimpleNamespace(data={"name": "example"})
+    out = await routines.async_run_routine(hass, call, "", None, [])
+    assert out["success"] and out["steps_executed"] == 2
+    assert len(hass.service_calls) == 2
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("service unavailable")
+
+    monkeypatch.setattr(hass.services, "async_call", fail)
+    out = await routines.async_run_routine(hass, call, "", None, [])
+    assert not out["success"] and out["steps_executed"] == 0
+    assert "service unavailable" in str(out["errors"])
+
+
+async def test_routine_rechecks_policy_at_dispatch(routines, cfg, monkeypatch):
+    cfg["actuation_service_allowlist"] = {"switch.relay_1": ["switch.turn_on"]}
+    monkeypatch.setattr(routines, "_load_routines", lambda: {"example": [
+        {"service": "switch.turn_on", "data": {"entity_id": "switch.relay_1"}},
+        {"announce": "All done"},
+    ]})
+    original = routines.actuation.execute_actuator
+
+    async def revoke_then_execute(*args, **kwargs):
+        cfg["actuation_service_allowlist"] = {}
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(routines.actuation, "execute_actuator", revoke_then_execute)
+    hass = FakeHass()
+    hass.states.set("switch.relay_1", "off")
+    out = await routines.async_run_routine(
+        hass, types.SimpleNamespace(data={"name": "example"}), "", None, [])
+    assert not out["success"] and "authorization" in str(out["errors"])
+    assert hass.service_calls == []
 
 
 # ── dispatch boundary: aliases / area resolution / plans ─────────────────────
