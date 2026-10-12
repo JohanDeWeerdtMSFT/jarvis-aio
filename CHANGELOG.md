@@ -1,3 +1,39 @@
+## [9.15.0] — Fix: camera→LLM calls can no longer freeze Home Assistant (issue #378)
+
+A user reported intermittent Home Assistant freezes correlated with JARVIS, with a
+shutdown traceback showing a Gemini **vision** request parked inside the Google
+GenAI SDK's retry `time.sleep()` on a `SyncWorker` thread ("still running at
+shutdown"). Root cause: a camera analysis runs the provider SDK in a Home
+Assistant **executor thread**, and the SDK could retry/sleep for a long time
+because **no per-request timeout** was set on the clients. Enough stuck calls
+(many cameras, or repeated motion while the provider is slow) exhaust HA's
+executor pool and the instance becomes unresponsive.
+
+**Two-layer fix (reliability hardening):**
+- **Every provider request is now bounded.** Groq / OpenAI / Anthropic clients get
+  a 60s per-request `timeout` + `max_retries=2`; the Gemini client gets the same
+  via `http_options` (timeout in ms + a bounded `retry_options`, built defensively
+  so an SDK-version quirk can never break client creation). A single request that
+  exceeds the ceiling is a hang, not a slow success — so a flaky provider fails
+  fast instead of sleep-retrying for minutes. **Ollama is unchanged** (it keeps its
+  longer 120s local-generation timeout for cold model loads).
+- **Concurrent camera LLM calls are capped** by a semaphore
+  (`VISION_MAX_CONCURRENCY = 2`): vision + reasoning calls now run through one
+  capped path, so however slow a provider is, camera analysis can never tie up
+  more than two executor threads and starve the rest of HA.
+
+Answering the reporter's questions: (1) yes — an unbounded retry could sit for a
+long time; it's now capped. (2) camera calls are now both time-limited and
+concurrency-limited. (3) the per-request timeout bounds how long a call lingers at
+shutdown (a Python thread can't be force-killed, but it now returns quickly). (4)
+no config change needed; a slow/unavailable provider now degrades vision
+gracefully instead of piling up.
+
+- **Tests:** the Gemini options builder (timeout ms + retry cap + base-url
+  passthrough) and the camera concurrency cap (never exceeds, and reaches, the
+  limit under load with a real thread pool).
+- No behaviour change on the healthy path. **Version** — manifest 9.14.0 → **9.15.0**.
+
 ## [9.14.0] — Surface the authority-enforce parity tally (enforce-flip Step A)
 
 Groundwork for widening the kernel authority-engine enforce allowlist, and a

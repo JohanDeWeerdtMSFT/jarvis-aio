@@ -165,6 +165,29 @@ async def async_make_client(hass: HomeAssistant, provider: str, model: str, fall
         _make_client, hass, provider, model, fallback, base_cfg)
 
 
+# Cap concurrent camera LLM calls (issue #378). A vision/reasoning call runs the
+# provider SDK in a Home Assistant executor (SyncWorker) thread and ties that
+# thread up for its whole duration; a slow or hung provider (the issue's Gemini
+# retry sitting in time.sleep) therefore holds a thread hostage. Without a cap,
+# stacked analyses — many cameras, or repeated motion while a provider is slow —
+# can occupy every executor thread and make HA unresponsive. This bounds how many
+# executor threads camera analysis can ever hold at once; together with the
+# per-request provider timeouts (llm_provider.PROVIDER_HTTP_TIMEOUT_S) a slow
+# provider degrades vision gracefully instead of freezing the instance.
+VISION_MAX_CONCURRENCY = 2
+_VISION_SEMAPHORE = asyncio.Semaphore(VISION_MAX_CONCURRENCY)
+
+
+async def _capped_camera_chat(hass: HomeAssistant, client, **chat_kwargs):
+    """Run an LLM ``chat()`` in an executor under the camera concurrency cap
+    (issue #378). Holds a semaphore slot for the real duration of the call, so the
+    number of executor threads camera analysis can tie up is bounded no matter how
+    slow the provider is."""
+    async with _VISION_SEMAPHORE:
+        return await hass.async_add_executor_job(
+            lambda: client.chat(**chat_kwargs))
+
+
 def _vision_model_rejects_images(exc) -> bool:
     """True when the error is the API refusing our image content because the
     configured vision model is text-only — e.g. Groq's
@@ -308,20 +331,19 @@ async def _reason_about_scene(
         + (f"\nRecent home activity:\n{context}" if context and context != "quiet — no notable recent activity" else "")
     )
     try:
-        result = await hass.async_add_executor_job(
-            lambda: reasoning_client.chat(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=220,
-                temperature=0.3,
-                model_override=reasoning_model or None,
-                # thinking left unset (None): the camera-reasoning model isn't
-                # the vision toggle's model, and some models (e.g. gemini-3.8-
-                # flash) 400 on the "minimal" level we'd otherwise send —
-                # leave it unset so it applies its own default.
-            )
+        result = await _capped_camera_chat(
+            hass, reasoning_client,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=220,
+            temperature=0.3,
+            model_override=reasoning_model or None,
+            # thinking left unset (None): the camera-reasoning model isn't
+            # the vision toggle's model, and some models (e.g. gemini-3.8-
+            # flash) 400 on the "minimal" level we'd otherwise send —
+            # leave it unset so it applies its own default.
         )
         data = _parse_json_obj((result.get("text") or "").strip())
         if isinstance(data, dict):
@@ -1279,26 +1301,25 @@ async def async_analyze_camera(
     try:
         vision_thinking = bool(_cfg_opt(hass, "vision_thinking_enabled", False))
         vision_max_tokens = _vision_max_tokens(hass, 300, vision_thinking)
-        result = await hass.async_add_executor_job(
-            lambda: vision_client.chat(
-                messages=[
-                    {"role": "system", "content": system},
-                    {
-                        "role": "user",
-                        "content": (
-                            [
-                                {"type": "image_url",
-                                 "image_url": {"url": f"data:image/jpeg;base64,{b}"}}
-                                for b in images_b64
-                            ]
-                            + [{"type": "text", "text": prompt}]
-                        ),
-                    },
-                ],
-                max_tokens=vision_max_tokens,
-                model_override=vision_model or None,
-                thinking=vision_thinking,
-            )
+        result = await _capped_camera_chat(
+            hass, vision_client,
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": (
+                        [
+                            {"type": "image_url",
+                             "image_url": {"url": f"data:image/jpeg;base64,{b}"}}
+                            for b in images_b64
+                        ]
+                        + [{"type": "text", "text": prompt}]
+                    ),
+                },
+            ],
+            max_tokens=vision_max_tokens,
+            model_override=vision_model or None,
+            thinking=vision_thinking,
         )
         analysis = _strip_think((result.get("text") or "").strip())
         # Best-effort LLM resident recognition (#140 Phase 3) — opt-in. Reuse the
