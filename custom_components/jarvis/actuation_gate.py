@@ -32,9 +32,14 @@ _LOGGER = logging.getLogger(__name__)
 ALLOWLIST_KEY = "actuation_allowlist"
 HA_TOOL_ALLOWLIST_KEY = "ha_api_tool_allowlist"
 SERVICE_ALLOWLIST_KEY = "actuation_service_allowlist"
+NOTIFICATION_ALLOWLIST_KEY = "notification_service_allowlist"
+SATELLITE_ALLOWLIST_KEY = "satellite_start_service_allowlist"
 
 _ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\Z")
 _TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}\Z")
+_NOTIFY_RE = re.compile(r"notify\.[a-z0-9_]+\Z")
+_SATELLITE_RE = re.compile(r"assist_satellite\.[a-z0-9_]+\Z")
+_ESPHOME_RE = re.compile(r"esphome\.[a-z0-9_]+\Z")
 
 # Allowed without any configuration: low-impact services, plus securing actions.
 _BASE: dict[str, frozenset] = {
@@ -110,6 +115,33 @@ def _validated_list(key: str, pattern: "re.Pattern[str]") -> frozenset:
 def allowlist() -> frozenset:
     """Validated set of exact entity ids permitted for elevated services."""
     return _validated_list(ALLOWLIST_KEY, _ENTITY_RE)
+
+
+def notification_service_permitted(service: str) -> bool:
+    """Authorize reviewed output endpoints, not selectors or discovered names."""
+    return (isinstance(service, str)
+            and service not in ("notify.notify", "notify.send_message")
+            and service in _validated_list(NOTIFICATION_ALLOWLIST_KEY, _NOTIFY_RE))
+
+
+def satellite_start_service_permitted(satellite: str, service: str) -> bool:
+    """Authorize an exact satellite/ESPHome pair; malformed policy denies all."""
+    raw = _cfg(SATELLITE_ALLOWLIST_KEY)
+    if raw is None:
+        return False
+    if isinstance(raw, dict):
+        valid = all(
+            isinstance(entity, str) and _SATELLITE_RE.fullmatch(entity)
+            and isinstance(services, (list, tuple))
+            and all(isinstance(s, str) and _ESPHOME_RE.fullmatch(s) for s in services)
+            for entity, services in raw.items()
+        )
+        if valid:
+            return (isinstance(satellite, str) and isinstance(service, str)
+                    and service in raw.get(satellite, ()))
+    _LOGGER.warning("JARVIS: %s is invalid; denying all satellite/service pairs",
+                    SATELLITE_ALLOWLIST_KEY)
+    return False
 
 
 def _service_permitted(target: str, domain: str, service: str) -> bool:

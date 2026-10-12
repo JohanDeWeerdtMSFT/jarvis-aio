@@ -391,20 +391,24 @@ async def test_trigger_provider_fallback_and_failure_are_handled(pb, fake_hass, 
 
 
 @pytest.mark.asyncio
-async def test_push_to_phone_titles_payload_and_failure_paths(pb, fake_hass, monkeypatch):
+async def test_push_to_phone_titles_payload_and_failure_paths(pb, fake_hass, load, monkeypatch):
+    monkeypatch.setattr(load("actuation_gate"), "_cfg", lambda k, d=None: {
+        "notification_service_allowlist": ["notify.mobile_app_example", "notify.user"],
+    }.get(k, d))
     driving = types.ModuleType("jc.driving_mode")
     driving.CAT_BRIEFING = "briefing"
     driving.CAT_SECURITY = "security"
-    driving.augment_data_for_category = lambda _hass, _config, category: {"category": category}
+    driving.augment_data_for_category = lambda _hass, _config, category: {"car_ui": True}
     monkeypatch.setitem(sys.modules, "jc.driving_mode", driving)
+    monkeypatch.setattr(sys.modules["jc"], "driving_mode", driving, raising=False)
 
     await pb._push_to_phone(fake_hass, {}, "No service", "arrival")
-    await pb._push_to_phone(fake_hass, {"notify_service": "mobile_app.phone"}, "Alert", "security")
+    await pb._push_to_phone(fake_hass, {"notify_service": "notify.mobile_app_example"}, "Alert", "security")
     assert fake_hass.service_calls == [(
-        "mobile_app", "phone", {
+        "notify", "mobile_app_example", {
             "message": "Alert",
             "title": "JARVIS — Security Alert",
-            "data": {"category": "security"},
+            "data": {"car_ui": True},
         },
     )]
 

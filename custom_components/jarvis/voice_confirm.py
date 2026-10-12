@@ -292,28 +292,29 @@ async def _wait_for_playback(hass, speakers: Sequence[str],
 
 
 async def _start_listening(hass, satellite: str) -> bool:
-    """Open the satellite's mic. Prefer assist_satellite.start_conversation with
-    an empty prompt; fall back to the ESPHome voice_assistant.start action if a
-    mapping is configured."""
+    """Open the native mic, or use a separately approved ESPHome endpoint pair."""
+    from .output_dispatch import async_start_satellite, service_succeeded
     try:
-        await hass.services.async_call(
+        result = await hass.services.async_call(
             "assist_satellite", "start_conversation",
             {"entity_id": satellite, "preannounce": False},
-            blocking=False,
+            blocking=True,
         )
+        if not service_succeeded(result):
+            raise RuntimeError("Native listening service returned failure")
         return True
     except Exception as exc:
         _LOGGER.debug("JARVIS: voice-confirm satellite prompt failed, trying ESPHome fallback: %s", exc)
-    # ESPHome fallback: user maps satellite → esphome start action entity
+    # Selection alone does not authorize a configurable fallback.
     esph = _cfg(hass, "satellite_start_action", {})
     if isinstance(esph, dict) and satellite in esph:
         try:
             svc = esph[satellite]  # e.g. "esphome.basement_start_va"
-            dom, _, name = svc.partition(".")
-            await hass.services.async_call(dom, name, {}, blocking=False)
-            return True
+            result = await async_start_satellite(hass, satellite, svc)
+            return result["ok"]
         except Exception as exc:
-            _LOGGER.debug("voice_confirm ESPHome start failed: %s", exc)
+            _LOGGER.warning("voice_confirm ESPHome start failed: %s", exc)
+    _LOGGER.warning("voice_confirm: no approved fallback could reopen the mic")
     return False
 
 
@@ -333,7 +334,8 @@ async def ask_followup(hass, question: str, *, turn_context: str = "",
         mode = _mode(hass)
         if mode == "native" or (mode == "auto" and _satellite_has_audio_out(hass, satellite)):
             try:
-                await hass.services.async_call(
+                from .output_dispatch import service_succeeded
+                result = await hass.services.async_call(
                     "assist_satellite", "start_conversation",
                     {
                         "entity_id": satellite,
@@ -343,6 +345,8 @@ async def ask_followup(hass, question: str, *, turn_context: str = "",
                     },
                     blocking=True,
                 )
+                if not service_succeeded(result):
+                    raise RuntimeError("Native follow-up service returned failure")
                 return {"ok": True, "mode": "native", "satellite": satellite}
             except Exception as exc:
                 _LOGGER.debug("voice_confirm followup native failed: %s", exc)
@@ -354,7 +358,9 @@ async def ask_followup(hass, question: str, *, turn_context: str = "",
             await tts_helper.async_announce(hass, question, tts_entity, speakers,
                                             context="followup")
             await _wait_for_playback(hass, speakers)
-        await _start_listening(hass, satellite)
+        if not await _start_listening(hass, satellite):
+            return {"ok": False, "mode": "gated", "satellite": satellite,
+                    "error": "Could not start listening through native or approved fallback"}
         return {"ok": True, "mode": "gated", "satellite": satellite}
     except Exception as exc:
         _LOGGER.warning("voice_confirm.ask_followup failed: %s", exc)

@@ -63,26 +63,16 @@ _ALLOWED_SITES: dict[tuple[str, str], str] = {
     # verify-after-act: _verify_control re-issues the SAME canonical action once
     # as part of the seam's verification step (control_device/H1).
     ("agent.py", "_verify_control"): "seam verify-after-act retry (H1)",
-    # routines: a user-AUTHORED macro of arbitrary service/target/data steps,
-    # executed verbatim — not a JARVIS device decision. Generic dispatcher; the
-    # per-entity seam does not fit arbitrary service+target+data steps.
-    ("routines.py", "async_run_routine"): "generic user-authored macro runner",
-    # config-driven phone/notify pushes (domain/service from notify_service) —
-    # communications, resolve to notify.*.
-    ("sentinel.py", "_announce_rule"): "config-driven notify (communication)",
-    ("appliance_monitor.py", "_announce_done"): "config-driven notify (communication)",
-    ("proactive_briefing.py", "_push_to_phone"): "config-driven notify (communication)",
-    ("cognitive_core.py", "_push_notification"): "config-driven push notify (communication)",
-    ("observer.py", "_send_notification"): "config-driven notify (communication)",
-    ("__init__.py", "_test_notify"): "config-driven test notify (communication)",
+    # Replaces the legacy raw routine/notify/ESPHome exemptions: routines now
+    # use the actuator seam; configurable outputs converge here. Entry validates
+    # independent exact endpoint policy and bounded notification/empty ESPHome
+    # payloads. This is a reviewed-output exception, not proof of physical safety.
+    ("output_dispatch.py", "_dispatch"): "exact-policy output boundary (default deny, bounded payload)",
     # tts / announcement playback through dynamic service names (jarvis.speak).
     ("proactive_audio.py", "_run_audit"): "jarvis.speak announcement (communication)",
     # the TTS announcement pipeline sets the target speaker's volume before
     # speaking — a playback-pipeline side effect, not a standalone device command.
     ("proactive_audio.py", "_set_volume"): "announcement-pipeline TTS volume (communication)",
-    # ESPHome fallback that starts a voice satellite listening — a voice-pipeline
-    # trigger, not a home device state change.
-    ("voice_confirm.py", "_start_listening"): "voice-satellite start action (communication)",
 }
 
 

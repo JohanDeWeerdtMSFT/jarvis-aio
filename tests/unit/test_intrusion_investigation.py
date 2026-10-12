@@ -155,7 +155,10 @@ async def test_residents_return_stops_investigation(safety, fake_hass, clock):
     assert safety._investigation is None
 
 
-async def test_notify_all_devices_hits_every_mobile_app(cc, fake_hass):
+async def test_notify_all_devices_hits_every_mobile_app(cc, fake_hass, load, monkeypatch):
+    monkeypatch.setattr(load("actuation_gate"), "_cfg", lambda k, d=None: {
+        "notification_service_allowlist": ["notify.mobile_app_sam", "notify.mobile_app_alex"],
+    }.get(k, d))
     fake_hass.services.register("notify", "mobile_app_sam")
     fake_hass.services.register("notify", "mobile_app_alex")
     fake_hass.services.register("notify", "slack")   # not a device target
@@ -165,7 +168,10 @@ async def test_notify_all_devices_hits_every_mobile_app(cc, fake_hass):
     assert any(c[0] == "persistent_notification" for c in fake_hass.service_calls)
 
 
-async def test_notify_all_falls_back_when_no_devices(cc, fake_hass):
+async def test_notify_all_falls_back_when_no_devices(cc, fake_hass, load, monkeypatch):
+    monkeypatch.setattr(load("actuation_gate"), "_cfg", lambda k, d=None: {
+        "notification_service_allowlist": ["notify.fallback"],
+    }.get(k, d))
     # no mobile_app services registered → fall back to the configured single one
     await cc._notify_all_devices(
         fake_hass, {"notify_service": "notify.fallback"}, "hi", "intrusion_investigating")

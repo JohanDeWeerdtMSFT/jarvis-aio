@@ -1005,7 +1005,7 @@ async def _speak(message: str, *, targets: list[str]) -> None:
             _LOGGER.warning("tts.speak to %s failed: %s", target, exc)
 
 
-async def _send_notification(message: str, *, urgency: str) -> None:
+async def _send_notification(message: str, *, urgency: str) -> dict:
     """Send push notification via configured notify service."""
     # v5.6.2: Check runtime_config first (panel Settings dropdown), then config
     notify_service = None
@@ -1022,9 +1022,9 @@ async def _send_notification(message: str, *, urgency: str) -> None:
     if not notify_service:
         notify_service = (_STATE.config or {}).get(CONF_NOTIFY_SERVICE)
     if not notify_service:
-        return
+        _LOGGER.warning("JARVIS: notification failed: no endpoint configured")
+        return {"ok": False, "error": "No notification endpoint configured"}
     try:
-        domain, service = notify_service.split(".", 1)
         title = "JARVIS" if urgency != "critical" else "⚠ JARVIS URGENT"
         payload = {"title": title, "message": message}
         try:
@@ -1035,11 +1035,11 @@ async def _send_notification(message: str, *, urgency: str) -> None:
                 payload["data"] = merged
         except Exception:
             pass
-        await _STATE.hass.services.async_call(
-            domain, service, payload, blocking=False,
-        )
+        from .output_dispatch import async_notify
+        return await async_notify(_STATE.hass, notify_service, payload)
     except Exception as exc:
         _LOGGER.warning("notification failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 # ─── Lifecycle ──────────────────────────────────────────────────────────────

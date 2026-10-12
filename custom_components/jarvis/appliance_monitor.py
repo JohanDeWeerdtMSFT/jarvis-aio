@@ -1112,13 +1112,9 @@ async def _announce_done(sensor: _SensorState, appliance_label: str) -> None:
                     # Try phone notification
                     try:
                         notify_svc = config.get("notify_service", "")
-                        if notify_svc:
-                            svc_domain, svc_name = notify_svc.split(".", 1)
-                            await hass.services.async_call(
-                                svc_domain, svc_name,
-                                {"message": message, "title": "JARVIS"},
-                                blocking=False,
-                            )
+                        from .output_dispatch import async_notify
+                        await async_notify(hass, notify_svc,
+                                           {"message": message, "title": "JARVIS"})
                     except Exception as exc:
                         _LOGGER.warning("JARVIS: appliance notification via '%s' failed: %s", notify_svc, exc)
                 return

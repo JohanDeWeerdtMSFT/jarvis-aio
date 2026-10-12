@@ -600,21 +600,24 @@ async def test_speak_filters_targets_resolves_tts_and_handles_errors(observer, f
 
 
 @pytest.mark.asyncio
-async def test_send_notification_runtime_config_payload_and_invalid_service(observer, fake_hass, monkeypatch):
+async def test_send_notification_runtime_config_payload_and_invalid_service(observer, fake_hass, load, monkeypatch):
     from jc.const import DOMAIN
 
     observer._STATE.hass = fake_hass
     observer._STATE.config = {"notify_service": "notify.fallback"}
-    fake_hass.data[DOMAIN] = {"entry": {"runtime_config": {"notify_service": "mobile_app.phone"}}}
+    fake_hass.data[DOMAIN] = {"entry": {"runtime_config": {"notify_service": "notify.mobile_app_example"}}}
+    monkeypatch.setattr(load("actuation_gate"), "_cfg", lambda k, d=None: {
+        "notification_service_allowlist": ["notify.mobile_app_example", "notify.fallback"],
+    }.get(k, d))
     driving = types.ModuleType("jc.driving_mode")
     driving.CAT_SECURITY = "security"
-    driving.augment_data_for_category = lambda *_args: {"tag": "urgent"}
+    driving.augment_data_for_category = lambda *_args: {"car_ui": True}
     monkeypatch.setitem(sys.modules, "jc.driving_mode", driving)
     monkeypatch.setattr(sys.modules["jc"], "driving_mode", driving, raising=False)
     await observer._send_notification("help", urgency="critical")
-    assert fake_hass.service_calls[-1][0:2] == ("mobile_app", "phone")
+    assert fake_hass.service_calls[-1][0:2] == ("notify", "mobile_app_example")
     assert fake_hass.service_calls[-1][2] == {
-        "title": "⚠ JARVIS URGENT", "message": "help", "data": {"tag": "urgent"},
+        "title": "⚠ JARVIS URGENT", "message": "help", "data": {"car_ui": True},
     }
     fake_hass.data[DOMAIN]["entry"]["runtime_config"].clear()
     await observer._send_notification("hello", urgency="low")
@@ -629,21 +632,24 @@ async def test_send_notification_runtime_config_payload_and_invalid_service(obse
 
 @pytest.mark.asyncio
 async def test_send_notification_invalid_service_and_service_error_are_contained(
-    observer, fake_hass, monkeypatch, caplog,
+    observer, fake_hass, load, monkeypatch, caplog,
 ):
     observer._STATE.hass = fake_hass
     observer._STATE.config = {"notify_service": "not-a-service"}
     await observer._send_notification("hello", urgency="low")
-    assert "notification failed" in caplog.text
+    assert "not explicitly authorized" in caplog.text
 
     observer._STATE.config["notify_service"] = "notify.phone"
+    monkeypatch.setattr(load("actuation_gate"), "_cfg", lambda k, d=None: {
+        "notification_service_allowlist": ["notify.phone"],
+    }.get(k, d))
 
     async def fail(*_args, **_kwargs):
         raise RuntimeError("notify failed")
 
     monkeypatch.setattr(fake_hass.services, "async_call", fail)
     await observer._send_notification("hello", urgency="critical")
-    assert "notification failed" in caplog.text
+    assert "Output service notify.phone failed" in caplog.text
 
 
 @pytest.mark.asyncio

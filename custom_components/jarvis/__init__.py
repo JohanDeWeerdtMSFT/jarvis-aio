@@ -1646,22 +1646,9 @@ def _register_services(
         notify_svc = rc.get("notify_service") or entry.options.get(
             "notify_service", entry.data.get("notify_service", "")
         )
-        if not notify_svc:
-            _LOGGER.warning("Test notify: no notify_service configured")
-            return
-        try:
-            domain, service = notify_svc.split(".", 1)
-            await hass.services.async_call(
-                domain, service,
-                {
-                    "title": "JARVIS",
-                    "message": "This is a test notification from JARVIS. If you see this, phone notifications are working.",
-                },
-                blocking=False,
-            )
-            _LOGGER.info("Test notification sent via %s", notify_svc)
-        except Exception as exc:
-            _LOGGER.warning("Test notification failed: %s", exc)
+        from .output_dispatch import async_test_notify
+        await async_test_notify(hass, notify_svc)
+        _LOGGER.info("Test notification handler completed via %s", notify_svc)
 
     _register_service("test_notify", _test_notify)
 
