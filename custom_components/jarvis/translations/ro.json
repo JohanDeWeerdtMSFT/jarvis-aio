@@ -90,7 +90,8 @@
           "observer": "Observator — conștientizare proactivă (folosește furnizorii LLM configurați)",
           "identity": "Identitate — recunoaștere per persoană",
           "email": "E-mail — căsuță doar pentru citire (parolă prin secrets.yaml)",
-          "agents": "Agents — specialised sub-agents (FRIDAY/HOMER), autonomy toggles"
+          "agents": "Agents — specialised sub-agents (FRIDAY/HOMER), autonomy toggles",
+          "voice": "Voice — add-on and pipeline consent"
         }
       },
       "llm": {
@@ -267,6 +268,14 @@
           "friday_confirm": "I understand FRIDAY can actuate my home; enable it",
           "proximity_volume": "Dampen TTS volume when I'm close to the speaker (needs mmWave distance sensors)",
           "host_telemetry": "Monitor host hardware (CPU temp, memory pressure, NVMe I/O)"
+        }
+      },
+      "voice": {
+        "title": "JARVIS — Voice Setup",
+        "description": "Both options are off by default. Add-on setup installs/starts Piper, Whisper and openWakeWord and downloads the JARVIS voice. Pipeline maintenance may create or update a JARVIS Assist pipeline.",
+        "data": {
+          "auto_bootstrap": "Allow JARVIS to install/start voice add-ons and download its voice",
+          "auto_pipeline": "Allow JARVIS to create or repair its Assist pipeline"
         }
       }
     },

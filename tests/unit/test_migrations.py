@@ -14,7 +14,7 @@ def m(load):
 
 def test_full_chain_v1_to_current(m):
     data, options, ver = m.migrate_config({}, {}, current_version=1)
-    assert ver == m.CURRENT_SCHEMA_VERSION == 7
+    assert ver == m.CURRENT_SCHEMA_VERSION == 8
     assert "tts_premium_engine" in options                         # v2
     assert options["tts_premium_contexts"] == [
         "briefing", "camera", "doorbell", "recognition"]
@@ -25,11 +25,13 @@ def test_full_chain_v1_to_current(m):
     assert options["observer_enabled"] is False                   # v6
     assert options["classifier_model"] == "gemini-2.5-flash-lite"
     assert options["bedroom_areas"] == []                         # v7
+    assert options["auto_bootstrap"] is False                     # v8
+    assert options["auto_pipeline"] is False
 
 
 def test_already_current_is_noop(m):
-    data, options, ver = m.migrate_config({"x": 1}, {"y": 2}, current_version=7)
-    assert ver == 7 and data == {"x": 1} and options == {"y": 2}
+    data, options, ver = m.migrate_config({"x": 1}, {"y": 2}, current_version=8)
+    assert ver == 8 and data == {"x": 1} and options == {"y": 2}
 
 
 def test_future_version_is_noop(m):
@@ -39,11 +41,27 @@ def test_future_version_is_noop(m):
 
 def test_partial_start_v5_skips_earlier_steps(m):
     _, options, ver = m.migrate_config({}, {}, current_version=5)
-    assert ver == 7
+    assert ver == 8
     assert "observer_enabled" in options        # 5→6 ran
     assert "bedroom_areas" in options           # 6→7 ran
     assert "tts_premium_engine" not in options  # 1→2 did NOT (started at v5)
     assert "llm_provider" not in options        # 3→4 did NOT
+
+
+@pytest.mark.parametrize(
+    "existing, expected",
+    [
+        ({}, {"auto_bootstrap": False, "auto_pipeline": False}),
+        ({"auto_bootstrap": True, "auto_pipeline": False},
+         {"auto_bootstrap": True, "auto_pipeline": False}),
+        ({"auto_bootstrap": False, "auto_pipeline": True},
+         {"auto_bootstrap": False, "auto_pipeline": True}),
+    ],
+)
+def test_voice_consent_migration_defaults_off_and_preserves_choices(m, existing, expected):
+    _, options, ver = m.migrate_config({}, dict(existing), current_version=7)
+    assert ver == 8
+    assert {key: options[key] for key in expected} == expected
 
 
 def test_legacy_cast_speakers_promoted_to_broadcast_group(m):
@@ -51,7 +69,7 @@ def test_legacy_cast_speakers_promoted_to_broadcast_group(m):
     _, options, ver = m.migrate_config(
         {}, {"cast_speakers": ["media_player.kitchen", "media_player.den"]},
         current_version=4)
-    assert ver == 7
+    assert ver == 8
     assert options["broadcast_speakers"] == ["media_player.kitchen", "media_player.den"]
     assert options["broadcast_group"] == "media_player.kitchen"
 
