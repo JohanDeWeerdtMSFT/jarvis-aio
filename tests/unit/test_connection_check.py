@@ -99,8 +99,59 @@ async def test_connection_still_fails_on_real_auth_error_with_model_in_message(l
     assert await lp.test_connection(fake_hass, "openai", "bad", "m", None) == "invalid_auth"
 
 
-async def test_connection_model_not_found_still_fails_for_ollama(lp, fake_hass, monkeypatch):
+# ── Ollama is validated for reachability, not for a specific model (issue #383)
+# A self-hosted server almost never has the placeholder cloud model id pulled, so
+# a "model not found" from a REACHABLE server must count as success, and the
+# primary probe lists models instead of pinging a model that can't exist. ──────
+
+class _OllamaLikeClient:
+    """Mimics the Ollama provider: an openai-style ``._client.models.list()`` for
+    the reachability probe, and a ``chat()`` that 404s on the placeholder model
+    exactly as a real server without that model pulled would."""
+
+    def __init__(self, list_ok=True):
+        list_ok_flag = list_ok
+
+        class _Models:
+            def list(self_inner):
+                if not list_ok_flag:
+                    raise OSError("Connection refused")
+                return {"data": []}   # reachable, even with no models pulled
+
+        class _Inner:
+            models = _Models()
+
+        self._client = _Inner()
+        self.chat_called = False
+
+    def chat(self, *a, **k):
+        self.chat_called = True
+        raise Exception('404 model "openai/gpt-oss-120b" not found, try pulling it first')
+
+
+async def test_connection_ollama_reachable_via_model_list(lp, fake_hass, monkeypatch):
+    # A reachable server whose models.list() answers validates — without ever
+    # pinging a chat model that may not be pulled.
+    client = _OllamaLikeClient(list_ok=True)
+    monkeypatch.setattr(lp, "create_provider", lambda p, k, m, b=None: client)
+    assert await lp.test_connection(fake_hass, "ollama", "", "openai/gpt-oss-120b",
+                                    "http://x:11434/v1") is None
+    assert client.chat_called is False   # reachability probe, not a generation
+
+
+async def test_connection_ollama_unreachable_still_fails(lp, fake_hass, monkeypatch):
+    # A genuinely unreachable server still fails fast with cannot_connect.
+    monkeypatch.setattr(lp, "create_provider",
+                        lambda p, k, m, b=None: _OllamaLikeClient(list_ok=False))
+    assert await lp.test_connection(fake_hass, "ollama", "", "m",
+                                    "http://down:11434/v1") == "cannot_connect"
+
+
+async def test_connection_ollama_model_not_found_counts_as_reachable(lp, fake_hass, monkeypatch):
+    # Backstop: if the chat fallback runs (no model-list accessor), a reachable
+    # server reporting "model not found" is a success, not a failure. This is the
+    # exact case that blocked Ollama setup before issue #383.
     monkeypatch.setattr(lp, "create_provider",
                         lambda p, k, m, b=None: _RaiseClient(
                             Exception("404 model_not_found: no such model")))
-    assert await lp.test_connection(fake_hass, "ollama", "", "m", "http://x") == "unknown"
+    assert await lp.test_connection(fake_hass, "ollama", "", "m", "http://x") is None

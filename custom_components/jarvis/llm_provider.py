@@ -1148,23 +1148,46 @@ def _is_model_not_found(exc) -> bool:
 
 
 async def test_connection(hass, provider, api_key, model, base_url):
-    """Verify the LLM is reachable and the credentials work with a tiny chat
-    call, so setup can fail fast on a bad URL or key instead of installing into
-    a broken state. Returns None on success, else a config-flow error key
-    ('cannot_connect' | 'invalid_auth' | 'unknown'). Client construction (which
-    does blocking SSL cert loading) and the ping both run in the executor;
-    never raises.
+    """Verify the LLM is reachable and the credentials work, so setup can fail
+    fast on a bad URL or key instead of installing into a broken state. Returns
+    None on success, else a config-flow error key ('cannot_connect' |
+    'invalid_auth' | 'unknown'). Client construction (which does blocking SSL
+    cert loading) and the ping both run in the executor; never raises.
+
+    A local/self-hosted backend (Ollama) is validated for **reachability**, not
+    for a specific model: the probe model is a fixed placeholder chosen before
+    the user picks a real one, and a self-hosted server almost never has a cloud
+    model id (e.g. the default ``openai/gpt-oss-120b``) pulled — a chat ping with
+    it 404s "model not found" even though the endpoint is perfectly reachable
+    (issue #383). So for Ollama we list the server's models instead, which proves
+    it answers without needing any particular model pulled.
     """
     def _ping():
         client = create_provider(provider, api_key, model, base_url or None)
         if client is None:
             raise RuntimeError("cannot_connect")
+        if provider == "ollama":
+            # Reachability probe via the OpenAI-compatible model list
+            # (GET <base>/models). Model-independent, and far cheaper than a
+            # generation that could trigger a cold model load.
+            inner = getattr(client, "_client", None)
+            lister = getattr(getattr(inner, "models", None), "list", None)
+            if callable(lister):
+                lister()
+                return None
         return client.chat([{"role": "user", "content": "ping"}],
                            tools=None, max_tokens=5)
     try:
         await hass.async_add_executor_job(_ping)
         return None
     except Exception as exc:
-        if provider != "ollama" and _is_model_not_found(exc):
+        # A "model not found" response can only come from a server that received
+        # and answered the request — exactly the reachability we validate — so it
+        # counts as a successful connection for every provider (the real model is
+        # chosen in a later step). Ollama was previously excluded here, which is
+        # why a reachable server without the placeholder model pulled still failed
+        # setup (issue #383); the reachability probe above now handles the common
+        # path and this stays as a backstop for the chat fallback.
+        if _is_model_not_found(exc):
             return None
         return _classify_conn_error(exc)
