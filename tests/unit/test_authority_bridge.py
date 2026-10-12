@@ -76,3 +76,58 @@ def test_token_input_affects_engine_decision(ab, load):
     assert d is not None and d.decision == auth.DENY
     # Still log-only: the mismatch is recorded, nothing is blocked.
     assert ab.parity_summary(hass)["disagree"] == 1
+
+
+# ── persistence across restarts (Step A.5) ───────────────────────────────────
+
+def test_authority_parity_to_from_dict(load):
+    A = load("kernel.authority")
+    # garbage in → empty-but-usable, never raises
+    p = A.AuthorityParity.from_dict(
+        {"agree": "x", "disagree": None, "by_capability": "nope",
+         "recent_mismatches": 5})
+    assert p.agree == 0 and p.disagree == 0
+    assert p.by_capability == {} and p.recent_mismatches == []
+    # a well-formed snapshot round-trips; agreement_rate is derived, not stored
+    good = {"agree": 3, "disagree": 1,
+            "by_capability": {"light.turn_on": [3, 1]},
+            "recent_mismatches": [{"capability": "lock.unlock"}]}
+    q = A.AuthorityParity.from_dict(good)
+    assert q.agree == 3 and q.disagree == 1
+    assert q.by_capability == {"light.turn_on": [3, 1]}
+    d = q.to_dict()
+    assert d["by_capability"] == {"light.turn_on": [3, 1]}
+    assert "agreement_rate" not in d
+
+
+def test_parity_persists_across_a_restart(ab, tmp_path, monkeypatch):
+    path = str(tmp_path / "authority_parity.json")
+    monkeypatch.setattr(ab, "_parity_path", lambda hass: path)
+
+    hass = FakeHass()
+    ab.record_control_parity(hass, "light", "turn_on", allowed=True)
+    ab.record_control_parity(hass, "lock", "unlock", allowed=True)
+    s1 = ab.parity_summary(hass)
+    assert (s1["agree"] + s1["disagree"]) == 2
+    assert ab.save_parity(hass) is True
+
+    # a fresh "restart": new hass has an empty in-memory tally until it loads.
+    hass2 = FakeHass()
+    assert ab.parity_summary(hass2).get("agree", 0) == 0
+    assert ab.load_parity(hass2) is True
+    s2 = ab.parity_summary(hass2)
+    assert s2["agree"] == s1["agree"] and s2["disagree"] == s1["disagree"]
+    assert s2["by_capability"] == s1["by_capability"]
+
+
+def test_save_and_load_are_best_effort(ab, tmp_path, monkeypatch):
+    # nothing recorded → nothing to save; no file → nothing to load. Never raise.
+    missing = str(tmp_path / "nope.json")
+    monkeypatch.setattr(ab, "_parity_path", lambda hass: missing)
+    assert ab.save_parity(FakeHass()) is False
+    assert ab.load_parity(FakeHass()) is False
+    # a corrupt file loads as "no restore", not a crash.
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not json")
+    monkeypatch.setattr(ab, "_parity_path", lambda hass: str(bad))
+    assert ab.load_parity(FakeHass()) is False

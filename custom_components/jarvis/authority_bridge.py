@@ -12,13 +12,69 @@ here is swallowed and the actuator path is untouched.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 _PARITY_KEY = "_authority_parity"
+# The tally lives in hass.data (in-memory) and so resets on every restart, which
+# wipes the engine-vs-gate agreement evidence the enforce-allowlist widening
+# depends on. Persist it to a small JSON file so it accrues across restarts and
+# updates (Step A.5). All of this is best-effort and off the authoritative path.
+_PARITY_FILE_PARTS = ("jarvis", "authority_parity.json")
+
+
+def _parity_path(hass):
+    try:
+        from .paths import config_path_str
+        return config_path_str(*_PARITY_FILE_PARTS, hass=hass)
+    except Exception:
+        return None
+
+
+def load_parity(hass) -> bool:
+    """Load the persisted parity tally into hass.data (Step A.5). Sync — call from
+    an executor at setup. Best-effort: a missing or corrupt file just leaves the
+    tally empty. Returns True if a tally was restored."""
+    path = _parity_path(hass)
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from .kernel import AuthorityParity
+        hass.data.setdefault(DOMAIN, {})[_PARITY_KEY] = AuthorityParity.from_dict(data)
+        return True
+    except Exception as exc:  # never raises into setup
+        _LOGGER.debug("authority parity load failed: %s", exc)
+        return False
+
+
+def save_parity(hass) -> bool:
+    """Persist the current parity tally to disk (Step A.5). Sync — call from an
+    executor (a periodic scheduler tick and on unload). Best-effort; writes
+    atomically via a temp file so a crash mid-write can't corrupt the store.
+    Returns True on a successful write."""
+    path = _parity_path(hass)
+    if not path:
+        return False
+    try:
+        p = (hass.data.get(DOMAIN) or {}).get(_PARITY_KEY)
+        if p is None:
+            return False
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(p.to_dict(), f)
+        os.replace(tmp, path)
+        return True
+    except Exception as exc:  # never raises into a scheduler tick / unload
+        _LOGGER.debug("authority parity save failed: %s", exc)
+        return False
 
 # ── authority ENFORCE (MCU Phase G/G4) ──────────────────────────────────────────
 # Owner-approved flip of the kernel capability engine from parity to enforce, built

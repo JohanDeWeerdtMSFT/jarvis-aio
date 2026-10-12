@@ -248,6 +248,36 @@ class AuthorityParity:
             "recent_mismatches": list(self.recent_mismatches),
         }
 
+    # ── persistence (plain dict; the HA-aware bridge does the file I/O) ──────
+    def to_dict(self) -> dict:
+        """A JSON-friendly snapshot for durable storage (counts + recent
+        mismatches). ``agreement_rate`` is derived, so it is not stored."""
+        return {
+            "agree": self.agree, "disagree": self.disagree,
+            "by_capability": {k: list(v) for k, v in self.by_capability.items()},
+            "recent_mismatches": list(self.recent_mismatches),
+        }
+
+    @classmethod
+    def from_dict(cls, d) -> "AuthorityParity":
+        """Rebuild from :meth:`to_dict`, tolerating partial/garbage input (a
+        corrupt file just yields an empty-but-usable tally — never raises)."""
+        p = cls()
+        try:
+            p.agree = int((d or {}).get("agree", 0) or 0)
+            p.disagree = int((d or {}).get("disagree", 0) or 0)
+            bc = (d or {}).get("by_capability") or {}
+            p.by_capability = {
+                str(k): [int(v[0]), int(v[1])]
+                for k, v in bc.items()
+                if isinstance(v, (list, tuple)) and len(v) == 2
+            }
+            rm = (d or {}).get("recent_mismatches") or []
+            p.recent_mismatches = [m for m in rm if isinstance(m, dict)][-p._max_mismatches:]
+        except Exception:
+            pass
+        return p
+
 
 def authorize(request: AuthorityRequest, *, policy: Optional[Policy] = None) -> AuthorityDecision:
     """Resolve an authority request to ALLOW / DENY / CONFIRM. Fails closed (DENY)

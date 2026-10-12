@@ -1,3 +1,28 @@
+## [9.16.0] — Persist the authority-enforce parity tally across restarts (enforce-flip Step A.5)
+
+Makes the enforce-allowlist-widening decision (Step B) trustworthy. The
+engine-vs-gate agreement tally that Step A (9.14.0) surfaced lived **only in
+memory** (`hass.data`), so it reset on every restart — which means it could never
+accrue enough evidence across the reboots that normal operation (and every update)
+involves. A fresh diagnostics dump right after updating showed exactly this: an
+empty tally. You can't widen an enforcement allowlist on zero observations.
+
+**What this lands (read/record-only — no enforcement behaviour change):**
+- **The tally now persists** to a small JSON file (`<config>/jarvis/authority_parity.json`).
+  `AuthorityParity` gains pure `to_dict()` / `from_dict()`; the HA-aware
+  `authority_bridge` gains `load_parity()` / `save_parity()` (atomic temp-file
+  write, best-effort, never raises).
+- **Wired into the integration lifecycle** exactly like the event ledger: loaded
+  off-loop at setup, flushed on a 5-minute scheduler tick, and saved once more on
+  a clean unload. A corrupt or missing file just starts an empty-but-usable tally.
+- So the per-capability agreement data now accrues across days of real use; your
+  next diagnostics dump gives real evidence to ground a specific Step B widening.
+
+- **Tests** cover the `to_dict`/`from_dict` round-trip (and garbage tolerance) and
+  the persist-across-restart path (record → save → fresh hass → load restores the
+  counts), plus best-effort save/load on missing/corrupt files.
+- **Version** — manifest 9.15.0 → **9.16.0**.
+
 ## [9.15.0] — Fix: camera→LLM calls can no longer freeze Home Assistant (issue #378)
 
 A user reported intermittent Home Assistant freezes correlated with JARVIS, with a
