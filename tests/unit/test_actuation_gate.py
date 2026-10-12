@@ -428,6 +428,36 @@ async def test_safety_fallback_fails_closed_on_non_securing_service(act, cfg, mo
     assert hass.service_calls == []
 
 
+@pytest.mark.parametrize("enforce", [True, False])
+@pytest.mark.parametrize("domain,service,entity", [
+    ("light", "turn_on", "light.lamp"),
+    ("switch", "turn_on", "switch.relay_1"),
+    ("lock", "unlock", "lock.example"),
+    ("cover", "open_cover", "cover.example"),
+    ("alarm_control_panel", "alarm_arm_away", "alarm_control_panel.example"),
+    ("light", "lock", "light.lamp"),
+])
+async def test_safety_wrapper_rejects_non_securing_before_any_path(
+        act, cfg, monkeypatch, enforce, domain, service, entity):
+    cfg["actuation_allowlist"] = [entity]
+    cfg["actuation_service_allowlist"] = {"switch.relay_1": ["switch.turn_on"]}
+    monkeypatch.setattr(act, "SAFETY_SEAM_ENFORCE", enforce)
+    seam_calls = []
+
+    async def successful_seam(*args, **kwargs):
+        seam_calls.append(kwargs)
+        return True, ""
+
+    monkeypatch.setattr(act, "execute_actuator", successful_seam)
+    hass = FakeHass()
+    hass.states.set(entity, "off")
+    assert not await act.execute_safety_actuator(
+        hass, capability=f"{domain}.{service}", entity_id=entity,
+        domain=domain, service=service, data={"entity_id": entity})
+    assert seam_calls == []
+    assert hass.service_calls == []
+
+
 # ── HA Assist API tool fallback ──────────────────────────────────────────────
 
 def test_ha_api_tools_denied_unless_read_only_or_allowlisted(gate, cfg):
