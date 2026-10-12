@@ -1,3 +1,36 @@
+## [9.18.0] — Fix: Ollama setup validation no longer rejects a reachable server (issue #383)
+
+A user with a working, reachable Ollama server (on a different subnet, HASS in
+Docker) couldn't get past the Ollama step of JARVIS setup — "the integration
+can't validate my running ollama instance" — no matter which URL format they
+tried.
+
+**Root cause:** the config-flow connection check pinged Ollama with a **chat
+completion for the placeholder model `openai/gpt-oss-120b`** — a cloud model id a
+self-hosted Ollama server will essentially never have pulled. Ollama answered
+`404 model "…" not found`, and the check **excluded Ollama** from the rule that
+treats "model not found" as a reachable success (every cloud provider already
+counted it as success, since the probe model is a fixed placeholder the user
+hasn't chosen yet). So any Ollama server without that exact model pulled failed
+validation regardless of connectivity.
+
+**Fix (setup reliability — no runtime behaviour change):**
+- Ollama is now validated for **reachability, not for a specific model**: the
+  probe lists the server's models (`GET <base>/models`, the OpenAI-compatible
+  endpoint Ollama serves) instead of generating with a model that may not exist.
+  It's model-independent and cheaper (no cold model load).
+- The "model not found means the server answered, so it's reachable" rule now
+  applies to **all** providers (Ollama included) as a backstop for the chat
+  fallback — it no longer singles Ollama out for rejection.
+- A genuinely unreachable server still fails fast with `cannot_connect`; both URL
+  forms keep working (`http://host:11434` is normalized to `…/v1`).
+
+- **Tests** cover the reachability probe (a reachable server validates without a
+  chat generation), an unreachable server still failing, and the backstop
+  (a reachable server reporting "model not found" now succeeds instead of
+  blocking setup).
+- **Version** — manifest 9.17.0 → **9.18.0**.
+
 ## [9.17.0] — Fix: face-recognition cache write no longer blocks the event loop
 
 Home Assistant's blocking-call detector flagged JARVIS in a user log:
