@@ -48,6 +48,14 @@ python3 scripts/audit.py
 # Unit tests
 python3 -m pytest tests/ -q
 
+# Focused safety boundaries (same selection as the CI safety-gates job)
+python3 -m pytest \
+  tests/unit/test_actuation_gate.py \
+  tests/unit/test_bootstrap.py \
+  tests/unit/test_local_fastpath_gate.py \
+  tests/unit/test_run_scene_kernel.py \
+  -q
+
 # Dashboard JavaScript parses
 node --check custom_components/jarvis/frontend/jarvis-panel.js
 
