@@ -650,6 +650,7 @@ class JarvisAgent(conversation.ConversationEntity):
                 self._llm_text, messages, persona
             )
 
+        from .actuation_gate import ha_tool_permitted
         tools = [
             {
                 "type": "function",
@@ -660,6 +661,7 @@ class JarvisAgent(conversation.ConversationEntity):
                 },
             }
             for t in hass_api.tools
+            if ha_tool_permitted(getattr(t, "name", ""))
         ]
 
         working = list(messages)

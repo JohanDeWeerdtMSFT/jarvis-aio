@@ -28,7 +28,24 @@ def published(load, monkeypatch):
     return sink
 
 
-async def test_scene_activation_publishes_event(agent, fake_hass, published):
+@pytest.fixture
+def allow(load, monkeypatch):
+    """Explicitly allowlist the exact entities these tests drive."""
+    jc = load("jarvis_config")
+    ids = ["scene.movie_night", "script.bedtime", "automation.away"]
+    monkeypatch.setattr(jc, "get", lambda k, d=None:
+                        ids if k == "actuation_allowlist" else d)
+
+
+async def test_scene_script_denied_without_allowlist(agent, fake_hass, published):
+    fake_hass.states.set("script.bedtime", "off")
+    out = await agent._exec_run_scene_script(fake_hass, {"entity_id": "script.bedtime"})
+    assert "success" not in json.loads(out) or json.loads(out)["success"] is False
+    assert fake_hass.service_calls == []
+    assert published == []
+
+
+async def test_scene_activation_publishes_event(agent, fake_hass, published, allow):
     fake_hass.states.set("scene.movie_night", "scening", area="living")
     out = await agent._exec_run_scene_script(
         fake_hass, {"entity_id": "scene.movie_night"})
@@ -42,7 +59,7 @@ async def test_scene_activation_publishes_event(agent, fake_hass, published):
     assert ev.location == "living"
 
 
-async def test_script_uses_turn_on(agent, fake_hass, published):
+async def test_script_uses_turn_on(agent, fake_hass, published, allow):
     fake_hass.states.set("script.bedtime", "off")
     await agent._exec_run_scene_script(fake_hass, {"entity_id": "script.bedtime"})
     assert published[0].data["capability"] == "script.turn_on"
@@ -50,7 +67,7 @@ async def test_script_uses_turn_on(agent, fake_hass, published):
     assert ("script", "turn_on") in [(c[0], c[1]) for c in fake_hass.service_calls]
 
 
-async def test_automation_uses_trigger(agent, fake_hass, published):
+async def test_automation_uses_trigger(agent, fake_hass, published, allow):
     fake_hass.states.set("automation.away", "on")
     await agent._exec_run_scene_script(fake_hass, {"entity_id": "automation.away"})
     assert published[0].data["capability"] == "automation.trigger"

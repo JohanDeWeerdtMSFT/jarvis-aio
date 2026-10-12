@@ -1618,6 +1618,7 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
 
     success = 0
     blocked = 0
+    denied = 0
     for eid in entities:
         try:
             svc_domain = eid.split(".")[0]
@@ -1652,12 +1653,14 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
                 # Route this target through the universal seam (H2): plan-execute
                 # → event, fire-and-forget, no verify. The seam publishes the
                 # actuation event on success.
-                ok, _ = await actuation.execute_actuator(
+                ok, _bulk_detail = await actuation.execute_actuator(
                     hass, capability=capability, entity_id=eid, domain=sd,
                     service=sn, data={"entity_id": eid}, action=action,
                     areq=areq, area=ctx["area"], verify=None, blocking=False)
                 if ok:
                     success += 1
+                elif str(_bulk_detail).startswith("blocked by authorization"):
+                    denied += 1
         except Exception as exc:
             _LOGGER.warning("JARVIS: bulk device control failed: %s", exc)
 
@@ -1669,6 +1672,10 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
         "count": success,
         "total": len(entities),
     }
+    if denied:
+        result["denied"] = denied
+        result["note_denied"] = (f"{denied} device(s) were refused by the "
+                                 f"authorization gate.")
     if blocked:
         result["blocked"] = blocked
         result["note"] = (f"{blocked} protected device(s) not changed in bulk; "
@@ -1770,6 +1777,13 @@ async def _exec_execute_plan(hass: HomeAssistant, args: dict) -> str:
 
         capability = f"{domain}.{service}"
         svc_data = {"entity_id": entity_id, **extra}
+        from . import actuation_gate
+        _allowed, _why = actuation_gate.authorize(
+            hass, domain, service, svc_data, entity_id)
+        if not _allowed:
+            results.append({"step": i + 1, "description": desc, "ok": False,
+                            "error": f"blocked by authorization gate: {_why}"})
+            continue
         areq = actuation.request(capability, entity_id, params=svc_data,
                                  action=service)
         kstep = _kplan.Step(action=capability, params=svc_data,
@@ -1779,7 +1793,7 @@ async def _exec_execute_plan(hass: HomeAssistant, args: dict) -> str:
                                 correlation_id=actuation.correlation_id())
 
         async def _run(_s, _d=domain, _svc=service, _data=svc_data):
-            await hass.services.async_call(_d, _svc, dict(_data), blocking=True)
+            await actuation.guarded_call(hass, _d, _svc, _data, blocking=True)
             return True
 
         async def _check(_cond, _s, _eid=entity_id):
@@ -2312,8 +2326,8 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
             return                           # first-try success stays silent
         _LOGGER.info("verify: %s not %s after %s — retrying once",
                      entity_id, "/".join(expected), action)
-        await hass.services.async_call(svc_domain, svc_name, dict(svc_data),
-                                       blocking=True)
+        await actuation.guarded_call(hass, svc_domain, svc_name, svc_data,
+                                     blocking=True)
         await _VERIFY_SLEEP(VERIFY_DELAY_SECS)
         ok = _state_ok(hass, entity_id, expected)
         from . import database
@@ -2942,6 +2956,31 @@ _TOOL_MAP = {
 }
 
 
+# Tools whose output an outsider can author. Once one has run in a reasoning
+# loop, the loop is "tainted": only read-only tools may follow (see
+# _execute_tool), so retrieved text can never drive a device action.
+_UNTRUSTED_OUTPUT_TOOLS = frozenset({
+    "web_research", "read_email", "search_documents", "calendar_agenda",
+    "look_at_camera", "delegate_task"})
+
+# Tools with no side effects. Anything not listed here (including every new
+# tool and every HA Assist API tool except its read-only ones) is treated as
+# control-capable.
+_READ_ONLY_TOOLS = frozenset({
+    "get_entity_state", "search_entities", "get_area_devices",
+    "get_home_summary", "cognitive_status", "connectivity_status",
+    "review_suggestions", "root_cause", "web_research", "calendar_agenda",
+    "read_email", "look_at_camera", "who_do_you_see", "where_last_seen",
+    "usual_times", "system_diagnostics", "energy_status", "hazard_report",
+    "activity_history", "weather_forecast", "wellbeing_context",
+    "search_documents"})
+
+
+def _is_read_only_tool(name: str) -> bool:
+    from .actuation_gate import HA_READ_ONLY_TOOLS
+    return name in _READ_ONLY_TOOLS or name in HA_READ_ONLY_TOOLS
+
+
 def _ha_kwargs(cls, **kwargs):
     """Keep only the kwargs that cls's constructor accepts. Home Assistant's LLM
     API changed fields across versions — 2026.8 moved the context out of
@@ -2961,8 +3000,23 @@ async def _execute_tool(
     tool_args: dict,
     hass_api: Optional[Any] = None,
     user_input: Optional[Any] = None,
+    untrusted_context: bool = False,
 ) -> str:
-    """Execute a tool call — custom tools first, then HA LLM API fallback."""
+    """Execute a tool call — custom tools first, then HA LLM API fallback.
+
+    ``untrusted_context`` is set once this reasoning loop has ingested content an
+    outsider can author (web pages, mail, documents, calendar text, delegated
+    output). From then on only read-only tools run: retrieval can never lead to
+    a device action or any other state change within the same loop."""
+    if untrusted_context and not _is_read_only_tool(tool_name):
+        _LOGGER.warning("tool '%s' refused: untrusted content is in context",
+                        tool_name)
+        return json.dumps({
+            "error": "refused: this request already used web/mail/document "
+                     "content, so actions are disabled for the rest of it. "
+                     "Ask again as a separate request to act.",
+            "tool": tool_name})
+
     # Custom JARVIS tools
     if tool_name in _TOOL_MAP:
         try:
@@ -2970,7 +3024,12 @@ async def _execute_tool(
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
-    # Fallback to HA's built-in LLM API tools
+    # Fallback to HA's built-in LLM API tools. These bypass the actuator seam,
+    # so only read-only ones (or ones the user named in ha_api_tool_allowlist)
+    # are permitted.
+    from . import actuation_gate
+    if hass_api and not actuation_gate.ha_tool_permitted(tool_name):
+        return json.dumps({"error": f"{tool_name} is not permitted"})
     if hass_api:
         from .const import DOMAIN
         for attempt in range(MAX_TOOL_RETRIES + 1):
@@ -4040,8 +4099,10 @@ async def run_agent(
     # tools — the whole point of delegation is a narrow surface.
     tools = _scoped_tool_list(allowed_tools)
     if hass_api and allowed_tools is None:
+        from .actuation_gate import ha_tool_permitted
         tools.extend(_ha_tools_to_openai_format(
-            hass_api.tools, getattr(hass_api, "custom_serializer", None)))
+            [t for t in hass_api.tools if ha_tool_permitted(getattr(t, "name", ""))],
+            getattr(hass_api, "custom_serializer", None)))
 
     # Create provider with fallback
     try:
@@ -4055,6 +4116,7 @@ async def run_agent(
     llm_run_state: dict[str, Any] = {}
     slim_retried = False   # one-shot 413 recovery (drop HA tools + home-state)
     _acted = False         # Phase AE shadow: did this turn execute a tool action?
+    _untrusted_seen = False  # set once web/mail/document text enters the loop
 
     _cap = MAX_TOOL_ITERATIONS
     if max_iterations is not None:
@@ -4280,7 +4342,12 @@ async def run_agent(
 
         # Execute tools
         for call in tool_calls:
-            if call["name"] == "delegate_task":
+            if call["name"] == "delegate_task" and _untrusted_seen:
+                result_str = json.dumps({
+                    "error": "refused: untrusted content is already in "
+                             "context; actions are disabled for this request",
+                    "tool": "delegate_task"})
+            elif call["name"] == "delegate_task":
                 result_str = await _run_delegated(
                     hass, call["args"],
                     persona=persona, provider_name=provider_name,
@@ -4290,13 +4357,20 @@ async def run_agent(
             else:
                 result_str = await _execute_tool(
                     hass, call["name"], call["args"], hass_api, user_input,
+                    untrusted_context=_untrusted_seen,
                 )
+            if call["name"] in _UNTRUSTED_OUTPUT_TOOLS:
+                _untrusted_seen = True
             _acted = True   # Phase AE shadow: the turn took a tool action
             working.append({
                 "role": "tool",
                 "tool_call_id": call.get("id", ""),
                 "content": result_str,
             })
+        if _untrusted_seen:
+            # Stop offering control tools for the rest of this loop.
+            tools = [t for t in tools if _is_read_only_tool(
+                (t.get("function") or {}).get("name", ""))]
 
     # Max iterations — ask for summary
     working.append({

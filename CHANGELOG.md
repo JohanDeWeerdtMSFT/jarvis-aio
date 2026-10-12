@@ -1,3 +1,11 @@
+## [Unreleased] — Draft safety foundation (not release-ready)
+
+- Bootstrap is opt-in: `auto_bootstrap` / `auto_pipeline` default off and require a strict boolean `true`; default startup no longer installs add-ons or rewrites Assist pipelines.
+- New `actuation_gate.py`: deterministic default-deny authorization at the service-dispatch boundary (`actuation.guarded_call`, `execute_actuator`, `execute_safety_actuator`, `execute_plan`). Sensitive services and script/scene/automation need an exact entry in `actuation_allowlist`; HA Assist-API tools are read-only unless in `ha_api_tool_allowlist`.
+- After web/mail/document/calendar/camera output enters a reasoning loop, control tools are removed and refused for the rest of that loop.
+- Behaviour change: unlock/open, scripts, scenes and automations no longer run without an allowlist entry. Securing actions still fail open to a direct call, but only if the gate authorizes them.
+- Merge blockers: direct service callers and allowlisted HA control tools bypass per-entity checks; retrieval provenance is loop-local, not cross-turn; the alternate conversation loop lacks dispatch enforcement; end-to-end retrieval/alias/area tests and a reproducible green CI baseline remain necessary.
+
 ## [9.18.0] — Fix: Ollama setup validation no longer rejects a reachable server (issue #383)
 
 A user with a working, reachable Ollama server (on a different subnet, HASS in
