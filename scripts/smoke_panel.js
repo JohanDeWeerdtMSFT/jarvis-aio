@@ -65,6 +65,7 @@ const _subscribedEvents = [];
 const _renameCalls = [];
 const _locationCalls = [];
 const _sugCalls = [];
+let _sugReply = { ok: false, installed: false, error: "Automation installation is disabled by policy." };
 let _semanticEnabled = false;
 let _activeMode = "normal";
 let _energyAgency = "advisory";
@@ -182,7 +183,7 @@ const hass = {
     if (m.type === "jarvis/suggestion_action") {
       _sugCalls.push({ id: m.suggestion_id, action: m.action });
       return m.action === "approve"
-        ? { ok: true, installed: true, alias: "JARVIS · porch on at 18:00" }
+        ? _sugReply
         : { ok: true };
     }
     if (m.type === "jarvis/camera_location") {
@@ -684,14 +685,15 @@ setTimeout(async () => {
       /No entries match/.test(el.shadowRoot.getElementById("debug-log-entries")?.textContent || "")],
   );
 
-  // ── pattern-engine suggestion: approve installs the automation (v6.52.0) ──
+  // ── pattern suggestions remain advisory; denied installation is not success ──
   // v7.81.0: suggestions live on their own tab now, not the dashboard.
   el._currentTab = "suggestions";
   el._render();
   const sugCard = el.shadowRoot.querySelector('.sug[data-sug-id="11"]');
   checks.push(
-    ["suggestion card renders with approve button",
-      !!sugCard && !!sugCard.querySelector(".sug-approve")],
+    ["suggestion card explicitly disables installation",
+      !!sugCard?.querySelector(".sug-approve")?.disabled
+        && /Installation disabled/.test(sugCard.textContent)],
     ["suggestion shows the why headline",
       !!sugCard && /A daily routine around 18:00/.test(sugCard.textContent)],
     ["suggestion shows observed evidence",
@@ -704,12 +706,36 @@ setTimeout(async () => {
   );
   sugCard?.querySelector(".sug-approve")?.click();
   await new Promise(r => setTimeout(r, 20));
-  const toastEl = el.shadowRoot.querySelector(".toast, #toast, .jarvis-toast");
+  checks.push(["disabled install button makes zero requests", _sugCalls.length === 0]);
+  const suggestionToasts = [];
+  const originalToast = el._toast;
+  el._toast = (message, level) => suggestionToasts.push({ message, level });
+  // A stale/client-injected event must still receive honest denial feedback.
+  sugCard?.querySelector(".sug-approve")?.dispatchEvent(new window.Event("click"));
+  await new Promise(r => setTimeout(r, 20));
   checks.push(
-    ["approve sends suggestion_action", _sugCalls.length === 1
+    ["injected install request reaches the denial handler", _sugCalls.length === 1
       && _sugCalls[0].id === 11 && _sugCalls[0].action === "approve"],
-    ["approved card is visually retired", sugCard?.style.opacity === "0.35"],
+    ["policy denial shows an error toast", suggestionToasts.at(-1)?.level === "err"
+      && /disabled by policy/.test(suggestionToasts.at(-1)?.message)],
+    ["denial does not retire the advisory card", sugCard?.style.opacity !== "0.35"
+      && !sugCard?.querySelector(".sug-dismiss")?.disabled
+      && !sugCard?.querySelector(".sug-yaml-btn")?.disabled],
   );
+  _sugReply = { ok: true, installed: true };
+  sugCard?.querySelector(".sug-approve")?.dispatchEvent(new window.Event("click"));
+  await new Promise(r => setTimeout(r, 20));
+  checks.push(["unexpected success cannot become installation authority",
+    suggestionToasts.at(-1)?.level === "err" && sugCard?.style.opacity !== "0.35"]);
+  sugCard?.querySelector(".sug-yaml-btn")?.click();
+  checks.push(["draft YAML remains reviewable after denial",
+    sugCard?.querySelector(".sug-yaml")?.hidden === false]);
+  sugCard?.querySelector(".sug-dismiss")?.click();
+  await new Promise(r => setTimeout(r, 20));
+  checks.push(["advisory dismissal remains available",
+    _sugCalls.at(-1)?.action === "dismiss" && sugCard?.style.opacity === "0.35"
+      && suggestionToasts.at(-1)?.level === "ok"]);
+  el._toast = originalToast;
 
   // v7.81.0: Suggestions is its own tab, with an empty state.
   checks.push(

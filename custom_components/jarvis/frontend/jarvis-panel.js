@@ -2868,9 +2868,9 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
           <span class="sug-seen">seen ${s.count || '?'}× in 30 days</span>
         </div>
         <div class="sug-actions">
-          <button class="sug-btn sug-approve">✓ Create automation</button>
+          <button class="sug-btn sug-approve" disabled title="Suggestions are advisory-only; automation installation is disabled by policy.">Installation disabled</button>
           <button class="sug-btn sug-dismiss">✕ Dismiss</button>
-          <button class="sug-btn sug-yaml-btn">⌄ See the automation</button>
+          <button class="sug-btn sug-yaml-btn">⌄ Review draft YAML</button>
         </div>
         <pre class="sug-yaml" hidden>${this._esc(s.yaml || '')}</pre>
       </div>`;
@@ -6275,11 +6275,13 @@ ${this._renderExcludedEntities(d)}
         if (!this._hass || isNaN(sid)) return;
         try {
           const res = await this._hass.callWS({ type: "jarvis/suggestion_action", suggestion_id: sid, action });
+          if (res?.ok !== true) {
+            this._toast(`✗ suggestion — ${res?.error || res?.reason || 'Request failed'}`, "err");
+            return;
+          }
           if (action === "approve") {
-            // v7.94.0: approval now installs the automation into HA directly.
-            this._toast(res?.installed
-              ? `✓ installed — "${res.alias || 'automation'}" is now live in Home Assistant`
-              : `✓ approved — advisory only${res?.reason ? ` (${res.reason})` : ''}`, "ok");
+            this._toast("✗ Automation installation is disabled by policy; suggestions are advisory-only.", "err");
+            return;
           } else {
             this._toast("✓ dismissed", "ok");
           }
@@ -11132,6 +11134,7 @@ ${this._renderExcludedEntities(d)}
   .sug-btn:hover { border-color: var(--line-hot); color: var(--text); }
   .sug-approve { border-color: rgba(0,245,160,0.35); color: var(--green); }
   .sug-approve:hover { border-color: var(--green); background: rgba(0,245,160,0.08); }
+  .sug-approve:disabled { border-color: var(--line); color: var(--text-dim); background: transparent; cursor: not-allowed; }
   .sug-dismiss { border-color: rgba(255,77,109,0.3); color: #ff8a9d; }
   .sug-dismiss:hover { border-color: var(--red); }
   .sug-yaml {

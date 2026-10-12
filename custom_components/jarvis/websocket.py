@@ -2568,27 +2568,20 @@ async def ws_suggestion_action(
     connection: websocket_api.ActiveConnection,
     msg: dict,
 ) -> None:
-    """Approve or dismiss a pattern-engine automation suggestion. Approval now
-    installs the automation into HA, not just flags it (v6.52.0)."""
+    """Deny installation requests; keep advisory suggestion dismissal available."""
     try:
         from .pattern_analyzer import get_analyzer, install_approved_suggestion
-        analyzer = get_analyzer()
         sid = int(msg["suggestion_id"])
         if msg["action"] == "approve":
+            from .automation_creator import AUTOMATION_INSTALLATION_ERROR
             res = await install_approved_suggestion(hass, sid)
-            if res.get("installed"):
-                jarvis_log("LEARN", f"Suggestion #{sid} approved & installed "
-                                    f"as '{res.get('alias')}'")
-            elif res.get("ok"):
-                jarvis_log("LEARN", f"Suggestion #{sid} approved "
-                                    f"(advisory — {res.get('reason')})")
+            error = res.get("error") or AUTOMATION_INSTALLATION_ERROR
+            jarvis_log("LEARN", f"Suggestion #{sid} not installed: {error}")
             connection.send_result(msg["id"], {
-                "ok": bool(res.get("ok")),
-                "installed": bool(res.get("installed")),
-                "reason": res.get("reason"),
-                "alias": res.get("alias"),
+                "ok": False, "installed": False, "error": error,
             })
             return
+        analyzer = get_analyzer()
         ok = await hass.async_add_executor_job(analyzer.dismiss_suggestion, sid)
         jarvis_log("LEARN", f"Suggestion #{sid} dismissed (ok={ok})")
         connection.send_result(msg["id"], {"ok": bool(ok)})

@@ -1579,7 +1579,8 @@ def _register_services(
     _register_service("observer_status", _observer_status)
 
     async def _create_automation(call: ServiceCall) -> None:
-        """Create an HA automation from service call data."""
+        """Surface installation policy denial as an HA service error."""
+        from homeassistant.exceptions import HomeAssistantError
         from .automation_creator import create_automation
         result = await create_automation(
             hass,
@@ -1590,10 +1591,7 @@ def _register_services(
             action=call.data.get("action"),
             mode=call.data.get("mode", "single"),
         )
-        if result.get("success"):
-            hass.bus.async_fire("jarvis_automation_created", result)
-        else:
-            _LOGGER.warning("Automation creation failed: %s", result.get("error"))
+        raise HomeAssistantError(result["error"])
 
     _register_service("create_automation", _create_automation)
 
