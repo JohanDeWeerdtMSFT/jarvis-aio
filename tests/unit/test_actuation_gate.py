@@ -138,6 +138,38 @@ def test_malformed_allowlist_fails_closed(gate, cfg, bad):
     assert _call(gate, "script", "turn_on", "script.goodnight") is False
 
 
+# ── regex anchor newline bypass tests ────────────────────────────────────────
+
+def test_entity_id_trailing_newline_denied(gate, cfg):
+    assert gate.authorize(FakeHass(), "light", "turn_on", {"entity_id": "light.kitchen\n"})[0] is False
+
+
+def test_tool_name_trailing_newline_denied(gate, cfg):
+    cfg["ha_api_tool_allowlist"] = ["HassTurnOn\n"]
+    assert gate.ha_tool_permitted("HassTurnOn\n") is False
+    assert gate.ha_tool_permitted("HassTurnOn") is False
+
+
+# ── hazardous switch gating tests ────────────────────────────────────────────
+
+@pytest.mark.parametrize("entity_id", [
+    "switch.alarm_panel", "switch.security_system", "switch.camera_power",
+    "switch.garage_door_relay", "switch.front_gate", "switch.door_deadbolt",
+    "switch.basement_heater", "switch.pool_pump", "switch.water_valve",
+    "input_boolean.siren_enabled", "input_boolean.security_override",
+])
+def test_hazardous_switch_denied_without_allowlist(gate, cfg, entity_id):
+    dom = entity_id.split(".")[0]
+    assert _call(gate, dom, "turn_on", entity_id) is False
+    cfg["actuation_allowlist"] = [entity_id]
+    assert _call(gate, dom, "turn_on", entity_id) is True
+
+
+def test_neutral_switch_allowed_by_default(gate, cfg):
+    assert _call(gate, "switch", "turn_on", "switch.living_room_lamp") is True
+    assert _call(gate, "input_boolean", "turn_on", "input_boolean.guest_mode") is True
+
+
 # ── dispatch boundary: aliases / area resolution / plans ─────────────────────
 
 async def test_execute_actuator_blocks_before_service_call(act, cfg):
@@ -205,6 +237,22 @@ async def test_safety_path_denies_unauthorized_but_secures(act, cfg):
         action="lock")
     await hass.drain()
     assert ok is True
+
+
+async def test_safety_fallback_fails_closed_on_non_securing_service(act, cfg, monkeypatch):
+    hass = FakeHass()
+    # Force seam execute_actuator to fail so fallback logic triggers
+    async def _failing_execute(*args, **kwargs):
+        return False, "seam fault"
+    monkeypatch.setattr(act, "execute_actuator", _failing_execute)
+
+    # Even if authorized in gate, non-securing service fails closed without fallback
+    ok = await act.execute_safety_actuator(
+        hass, capability="light.turn_on", entity_id="light.front_porch",
+        domain="light", service="turn_on", data={"entity_id": "light.front_porch"},
+        action="turn_on")
+    assert ok is False
+    assert hass.service_calls == []
 
 
 # ── HA Assist API tool fallback ──────────────────────────────────────────────

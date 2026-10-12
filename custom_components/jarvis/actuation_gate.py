@@ -30,8 +30,8 @@ _LOGGER = logging.getLogger(__name__)
 ALLOWLIST_KEY = "actuation_allowlist"
 HA_TOOL_ALLOWLIST_KEY = "ha_api_tool_allowlist"
 
-_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
-_TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\Z")
+_TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}\Z")
 
 # Allowed without any configuration: low-impact services, plus securing actions.
 _BASE: dict[str, frozenset] = {
@@ -52,6 +52,14 @@ _BASE: dict[str, frozenset] = {
     "alarm_control_panel": frozenset({
         "alarm_arm_home", "alarm_arm_away", "alarm_arm_night"}),
 }
+
+# Substrings that make an otherwise-neutral switch/input_boolean potentially hazardous.
+# Such entities are elevated and require explicit listing in actuation_allowlist.
+_HAZARDOUS_SWITCH_HINTS = (
+    "alarm", "security", "camera", "lock", "garage", "gate", "door",
+    "heater", "heating", "siren", "valve", "furnace", "boiler", "pump",
+    "deadbolt", "barrier",
+)
 
 # Allowed only for an entity that is explicitly allowlisted.
 _ELEVATED: dict[str, frozenset] = {
@@ -86,7 +94,8 @@ def _cfg(key: str, default: Any = None) -> Any:
     try:
         from . import jarvis_config
         return jarvis_config.get(key, default)
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("actuation_gate: error accessing config key '%s': %s (failing closed)", key, exc)
         return default   # unreadable config is treated as "nothing allowlisted"
 
 
@@ -142,6 +151,17 @@ def authorize(hass, domain: Any, service: Any, data: Any,
             return False, f"{domain}.{service} is not permitted"
 
         if service in base:
+            # Hazardous switches/booleans (controlling security, heaters, pumps, barriers, etc.)
+            # are potentially dangerous and must not be operated without explicit allowlisting.
+            if domain in ("switch", "input_boolean"):
+                hay = target.lower()
+                if any(h in hay for h in _HAZARDOUS_SWITCH_HINTS):
+                    if target in allowlist():
+                        return True, ""
+                    return False, (
+                        f"{domain}.{service} on hazardous entity {target} requires "
+                        f"the entity to be listed in {ALLOWLIST_KEY}"
+                    )
             return True, ""
 
         if (domain == "cover" and service in _SAFE_COVER_OPENING

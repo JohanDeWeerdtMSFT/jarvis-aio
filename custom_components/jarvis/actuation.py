@@ -855,9 +855,15 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
             entity_id, capability, exc)
 
     # Fail toward protection: secure directly so a safety response is never
-    # blocked by a seam fault. Idempotent, so this cannot un-secure anything.
-    # Reaching here means the seam already failed — a `failure` certification
-    # scenario; it closes iff this fail-open recovery secures the home.
+    # blocked by a seam fault. Only genuinely securing, idempotent actions
+    # (_SAFETY_EXPECTED: lock, close_cover) are permitted to use this fallback.
+    # Non-securing or non-idempotent actions must fail closed.
+    if service not in _SAFETY_EXPECTED:
+        _LOGGER.warning(
+            "safety seam failed on %s (%s.%s) and service is not in _SAFETY_EXPECTED; "
+            "failing closed (no fallback)", entity_id, domain, service)
+        return False
+
     try:
         _recovered = await _direct()
         _emit_failure_shadow(recovered=_recovered)
