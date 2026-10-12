@@ -336,7 +336,38 @@ async def test_step_init_renders_menu(config_flow, fake_hass):
     res = await _flow(config_flow, fake_hass).async_step_init(None)
     assert res["type"] == "menu" and res["step_id"] == "init"
     assert set(res["menu_options"]) == {
-        "llm", "core", "routing", "observer", "identity", "email", "agents"}
+        "llm", "core", "routing", "observer", "identity", "email", "agents", "voice"}
+
+
+async def test_step_voice_renders_off_by_default(config_flow, fake_hass):
+    flow = _flow(config_flow, fake_hass)
+    res = await flow.async_step_voice(None)
+    assert res["type"] == "form" and res["step_id"] == "voice"
+    assert len(res["data_schema"].schema) == 2
+    assert flow._cur("auto_bootstrap", False) is False
+    assert flow._cur("auto_pipeline", False) is False
+
+
+@pytest.mark.parametrize("auto_bootstrap,auto_pipeline", [(False, False), (True, True)])
+async def test_step_voice_persists_explicit_consent(
+    config_flow, fake_hass, monkeypatch, auto_bootstrap, auto_pipeline,
+):
+    config = types.SimpleNamespace(set_many=lambda values: None)
+    monkeypatch.setitem(sys.modules, "jc.jarvis_config", config)
+    monkeypatch.setattr(fake_hass, "async_add_executor_job",
+                        lambda fn, *args: _async_call(fn, *args))
+    flow = _flow(config_flow, fake_hass)
+    res = await flow.async_step_voice({
+        "auto_bootstrap": auto_bootstrap,
+        "auto_pipeline": auto_pipeline,
+    })
+    assert res["type"] == "create_entry"
+    assert res["data"]["auto_bootstrap"] is auto_bootstrap
+    assert res["data"]["auto_pipeline"] is auto_pipeline
+
+
+async def _async_call(fn, *args):
+    return fn(*args)
 
 
 async def test_step_agents_renders_fields(config_flow, fake_hass):

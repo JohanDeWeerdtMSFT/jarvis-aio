@@ -90,7 +90,8 @@
           "observer": "Observer — proactive awareness (uses configured LLM providers)",
           "identity": "Identity — per-person recognition",
           "email": "Email — read-only inbox (password via secrets.yaml)",
-          "agents": "Agents — specialised sub-agents (FRIDAY/HOMER), autonomy toggles"
+          "agents": "Agents — specialised sub-agents (FRIDAY/HOMER), autonomy toggles",
+          "voice": "Voice — add-on and pipeline consent"
         }
       },
       "llm": {
@@ -153,6 +154,14 @@
           "llm_provider": "Conversation model provider",
           "use_hass_api": "Enable home control (lights, climate, locks, etc.)",
           "web_research_llm_fallback": "Let web research escalate to the LLM's own web search when the default backend finds nothing"
+        }
+      },
+      "voice": {
+        "title": "JARVIS — Voice Setup",
+        "description": "Both options are off by default. Add-on setup installs/starts Piper, Whisper and openWakeWord and downloads the JARVIS voice. Pipeline maintenance may create or update a JARVIS Assist pipeline.",
+        "data": {
+          "auto_bootstrap": "Allow JARVIS to install/start voice add-ons and download its voice",
+          "auto_pipeline": "Allow JARVIS to create or repair its Assist pipeline"
         }
       },
       "core_model": {
