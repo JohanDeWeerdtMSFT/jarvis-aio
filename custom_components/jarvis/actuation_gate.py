@@ -115,12 +115,18 @@ def ha_tool_permitted(tool_name: str) -> bool:
         return False
     if tool_name in HA_READ_ONLY_TOOLS:
         return True
+    from .grounded_boundary import is_grounded
+    if is_grounded():
+        return False
     return tool_name in _validated_list(HA_TOOL_ALLOWLIST_KEY, _TOOL_RE)
 
 
 def authorize(hass, domain: Any, service: Any, data: Any,
               entity_id: Optional[str] = None) -> tuple[bool, str]:
-    """Return ``(allowed, reason)``. Pure, deterministic, fail closed."""
+    """Return ``(allowed, reason)``. Deterministic, fail closed."""
+    from .grounded_boundary import is_grounded, deny_action
+    if is_grounded():
+        return False, deny_action()
     try:
         if not isinstance(domain, str) or not isinstance(service, str):
             return False, "invalid service"
