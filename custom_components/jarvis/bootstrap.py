@@ -393,6 +393,16 @@ def _current_version() -> str:
 
 # ── Orchestration ────────────────────────────────────────────────────────────
 
+def is_opted_in(key: str) -> bool:
+    """True only when the config value is exactly boolean True (default off).
+
+    Voice add-on installation and Assist-pipeline changes are side effects on the
+    host, so a missing, malformed, or string value must never enable them.
+    """
+    from . import jarvis_config
+    return jarvis_config.get(key, False) is True
+
+
 async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> dict:
     """
     Full bootstrap. Idempotent + best-effort. Returns a status dict. Safe to call
@@ -403,7 +413,7 @@ async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> di
     status = {"supervised": False, "addons_ok": False, "voice_ok": False,
               "wyoming_ok": False, "pipeline_ok": False, "skipped": None}
 
-    if not bool(jarvis_config.get("auto_bootstrap", True)):
+    if not is_opted_in("auto_bootstrap"):
         status["skipped"] = "auto_bootstrap disabled"
         return status
 
@@ -421,7 +431,7 @@ async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> di
 
     voice_quality = str(jarvis_config.get("voice_quality", "medium"))
     tts_provider = str(jarvis_config.get("tts_provider", "piper_jarvis"))
-    auto_pipeline = bool(jarvis_config.get("auto_pipeline", True))
+    auto_pipeline = is_opted_in("auto_pipeline")
 
     _LOGGER.info("JARVIS bootstrap: starting (version=%s quality=%s)", version, voice_quality)
 
@@ -479,6 +489,8 @@ async def async_ensure_pipeline_agent(hass: HomeAssistant) -> None:
     pipeline by its name OR its JARVIS Piper voice, so it works no matter what the
     pipeline is called.
     """
+    if not is_opted_in("auto_pipeline"):
+        return
     try:
         from homeassistant.components import assist_pipeline
     except Exception:
@@ -524,7 +536,7 @@ def schedule_bootstrap(hass: HomeAssistant) -> None:
             await async_ensure_pipeline_agent(hass)
         except Exception as exc:
             _LOGGER.debug("JARVIS: pipeline-agent repair error: %s", exc)
-        if is_supervised():
+        if is_supervised() and is_opted_in("auto_bootstrap"):
             try:
                 await async_run_bootstrap(hass)
             except Exception as exc:

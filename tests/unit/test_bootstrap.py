@@ -88,16 +88,27 @@ async def test_skips_when_flag_disabled(bootstrap, jarvis_config, fake_hass, mon
 @pytest.mark.asyncio
 async def test_skips_without_supervisor(bootstrap, jarvis_config, fake_hass, monkeypatch):
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
-    monkeypatch.setattr(jarvis_config, "get", lambda k, d=None: d)
+    monkeypatch.setattr(jarvis_config, "get",
+                        lambda k, d=None: True if k == "auto_bootstrap" else d)
     status = await bootstrap.async_run_bootstrap(fake_hass)
     assert status["supervised"] is False
     assert "Supervisor" in status["skipped"]
 
 
 @pytest.mark.asyncio
-async def test_skips_when_already_bootstrapped(bootstrap, jarvis_config, fake_hass, monkeypatch):
+async def test_skips_by_default_without_opt_in(bootstrap, jarvis_config, fake_hass, monkeypatch):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
     monkeypatch.setattr(jarvis_config, "get", lambda k, d=None: d)
+    status = await bootstrap.async_run_bootstrap(fake_hass)
+    assert status["skipped"] == "auto_bootstrap disabled"
+    assert status["addons_ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_skips_when_already_bootstrapped(bootstrap, jarvis_config, fake_hass, monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
+    monkeypatch.setattr(jarvis_config, "get",
+                        lambda k, d=None: True if k == "auto_bootstrap" else d)
     version = bootstrap._current_version()
     bootstrap._write_marker(version, {"addons_ok": True, "voice_ok": True})
     status = await bootstrap.async_run_bootstrap(fake_hass)
@@ -109,7 +120,8 @@ async def test_force_overrides_marker(bootstrap, jarvis_config, fake_hass, monke
     # force=True must NOT early-return on the marker; it should proceed past the
     # marker gate (and then do real work, which we cut short by failing addons).
     monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
-    monkeypatch.setattr(jarvis_config, "get", lambda k, d=None: d)
+    monkeypatch.setattr(jarvis_config, "get",
+                        lambda k, d=None: True if k == "auto_bootstrap" else d)
     bootstrap._write_marker(bootstrap._current_version(), {"addons_ok": True, "voice_ok": True})
 
     async def _no_addon(hass, slug, friendly):
