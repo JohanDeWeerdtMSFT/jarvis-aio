@@ -1,3 +1,26 @@
+## [9.18.1] — Ollama setup hardening (edge cases from the #383 review)
+
+Follow-up hardening to the 9.18.0 Ollama fix, from a stress-test of the full
+setup flow. No change for the common case; these close three gaps found at the
+edges:
+
+- **Reverse-proxy URLs now get `/v1` too.** The OpenAI-compatible path was only
+  auto-appended to a bare `host:11434`. A proxied Ollama on another port or host
+  without a path (e.g. `https://ollama.example.com`) was left without `/v1`, so the
+  probe hit the wrong endpoint. `/v1` is now appended to any path-less base URL,
+  while a URL that already has a path (`…/v1`, or a deliberate proxy subpath like
+  `…/ollama`) is left untouched.
+- **Clearer "no models" message.** If setup reaches model selection with an Ollama
+  server that has no models pulled, the error now says to pull one first
+  (`ollama pull …`) instead of only pointing at the endpoint.
+- **Provider name is matched case-insensitively** in the connection check, so a
+  capitalised `Ollama` still takes the reachability path rather than a chat ping.
+
+- **Tests** cover the URL normalization (bare host, reverse-proxy origin, and
+  explicit-path pass-through) and the case-insensitive provider match.
+- **Version** — manifest 9.18.0 → **9.18.1** (patch: reliability hardening, no new
+  feature).
+
 ## [9.18.0] — Fix: Ollama setup validation no longer rejects a reachable server (issue #383)
 
 A user with a working, reachable Ollama server (on a different subnet, HASS in

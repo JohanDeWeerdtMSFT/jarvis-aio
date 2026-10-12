@@ -155,3 +155,32 @@ async def test_connection_ollama_model_not_found_counts_as_reachable(lp, fake_ha
                         lambda p, k, m, b=None: _RaiseClient(
                             Exception("404 model_not_found: no such model")))
     assert await lp.test_connection(fake_hass, "ollama", "", "m", "http://x") is None
+
+
+async def test_connection_provider_is_case_insensitive(lp, fake_hass, monkeypatch):
+    # A capitalised provider name must still take the Ollama reachability path
+    # (list models), not fall through to a chat ping.
+    client = _OllamaLikeClient(list_ok=True)
+    monkeypatch.setattr(lp, "create_provider", lambda p, k, m, b=None: client)
+    assert await lp.test_connection(fake_hass, "Ollama", "", "m", "http://x:11434") is None
+    assert client.chat_called is False
+
+
+# ── Ollama base-URL normalization: the OpenAI-compatible API lives under /v1 ─────
+# A bare host:port, or a reverse-proxy origin with no path, must gain /v1; a URL
+# that already carries a path (…/v1 or a custom proxy subpath) is left alone.
+def test_ollama_normalize_url_appends_v1_when_pathless(lp):
+    n = lp.OllamaProvider._normalize_url
+    # bare host:port and trailing-slash forms -> /v1
+    assert n("http://10.0.5.9:11434") == "http://10.0.5.9:11434/v1"
+    assert n("http://10.0.5.9:11434/") == "http://10.0.5.9:11434/v1"
+    # reverse proxy on a non-11434 port / no port, no path -> /v1 (the gap #383 left)
+    assert n("https://ollama.example.com") == "https://ollama.example.com/v1"
+    assert n("http://ip:8080") == "http://ip:8080/v1"
+
+
+def test_ollama_normalize_url_leaves_explicit_paths_untouched(lp):
+    n = lp.OllamaProvider._normalize_url
+    assert n("http://10.0.5.9:11434/v1") == "http://10.0.5.9:11434/v1"       # already /v1
+    assert n("https://host.tld/ollama") == "https://host.tld/ollama"         # custom subpath
+    assert n("") == "" and n(None) is None                                    # empty/None pass through
