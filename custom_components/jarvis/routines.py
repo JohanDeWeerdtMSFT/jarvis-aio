@@ -155,6 +155,28 @@ async def async_run_routine(
     }
 
 
+async def async_run_routine_service(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    honorific: str,
+    tts_entity: str | None,
+    speakers: list[str],
+) -> dict:
+    """Run a routine and surface any unsuccessful result as an HA service error."""
+    result = await async_run_routine(hass, call, honorific, tts_entity, speakers)
+    if not isinstance(result, dict) or result.get("success") is not True:
+        details = result.get("errors") if isinstance(result, dict) else None
+        if not details and isinstance(result, dict):
+            details = result.get("error", "invalid routine result")
+        if isinstance(details, (list, tuple)):
+            details = "; ".join(str(item) for item in details)
+        from homeassistant.exceptions import HomeAssistantError
+        raise HomeAssistantError(
+            f"Routine {getattr(call, 'data', {}).get('name', '')!r} failed: "
+            f"{details or 'unknown error'}")
+    return result
+
+
 def list_routines() -> list[str]:
     """Return names of available routines."""
     return list(_load_routines().keys())

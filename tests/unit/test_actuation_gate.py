@@ -218,6 +218,18 @@ def routines(load, cfg, monkeypatch):
     return mod
 
 
+@pytest.fixture
+def routine_service_error(monkeypatch):
+    module = types.ModuleType("homeassistant.exceptions")
+
+    class HomeAssistantError(Exception):
+        pass
+
+    module.HomeAssistantError = HomeAssistantError
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", module)
+    return HomeAssistantError
+
+
 @pytest.mark.parametrize("enabled", [None, False, "true", 1, [], {"enabled": True}])
 async def test_disabled_routines_never_load_or_dispatch(
         routines, cfg, monkeypatch, enabled):
@@ -233,6 +245,16 @@ async def test_disabled_routines_never_load_or_dispatch(
         ["media_player.example"])
     assert out["error"] == "routine_execution_disabled"
     assert not out["success"] and out["steps_executed"] == 0
+    assert hass.service_calls == []
+
+
+async def test_routine_service_surfaces_disabled_failure(
+        routines, cfg, routine_service_error):
+    cfg.pop("routine_execution_enabled")
+    hass = FakeHass()
+    with pytest.raises(routine_service_error, match="execution is disabled"):
+        await routines.async_run_routine_service(
+            hass, types.SimpleNamespace(data={"name": "example"}), "", None, [])
     assert hass.service_calls == []
 
 
@@ -289,6 +311,19 @@ async def test_routine_preflight_denies_without_any_dispatch(
     assert hass.service_calls == []
 
 
+async def test_routine_service_surfaces_preflight_denial_without_calls(
+        routines, routine_service_error, monkeypatch):
+    monkeypatch.setattr(routines, "_load_routines", lambda: {"example": [
+        {"service": "light.turn_on", "target": {"entity_id": "all"},
+         "optional": True, "announce": "Done"},
+    ]})
+    hass = FakeHass()
+    with pytest.raises(routine_service_error, match="exactly one entity id"):
+        await routines.async_run_routine_service(
+            hass, types.SimpleNamespace(data={"name": "example"}), "", None, [])
+    assert hass.service_calls == []
+
+
 @pytest.mark.parametrize("name", ["goodnight", "goodmorning", "leaving", "arriving"])
 async def test_default_routines_make_zero_calls(routines, name):
     hass = FakeHass()
@@ -320,6 +355,23 @@ async def test_routine_authorized_controls_and_failure_feedback(
     out = await routines.async_run_routine(hass, call, "", None, [])
     assert not out["success"] and out["steps_executed"] == 0
     assert "service unavailable" in str(out["errors"])
+
+
+async def test_routine_service_surfaces_execution_failure(
+        routines, cfg, routine_service_error, monkeypatch):
+    monkeypatch.setattr(routines, "_load_routines", lambda: {"example": [
+        {"service": "light.turn_on", "data": {"entity_id": "light.lamp"}},
+    ]})
+    hass = FakeHass()
+    hass.states.set("light.lamp", "off")
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("service unavailable")
+
+    monkeypatch.setattr(hass.services, "async_call", fail)
+    with pytest.raises(routine_service_error, match="service unavailable"):
+        await routines.async_run_routine_service(
+            hass, types.SimpleNamespace(data={"name": "example"}), "", None, [])
 
 
 async def test_routine_rechecks_policy_at_dispatch(routines, cfg, monkeypatch):

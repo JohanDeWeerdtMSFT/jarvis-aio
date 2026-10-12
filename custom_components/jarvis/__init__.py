@@ -36,7 +36,7 @@ from .camera import (
 )
 from .briefing import async_briefing
 from .scenes import async_activate_by_intent
-from .routines import async_run_routine, list_routines
+from .routines import async_run_routine_service, list_routines
 from .reminders import async_add_reminder_service, ReminderWatcher
 from .recognition import register_recognition_listener
 from .summary import async_summarise
@@ -1309,7 +1309,7 @@ def _register_services(
         honorific = entry.options.get(CONF_HONORIFIC, entry.data.get(CONF_HONORIFIC, DEFAULT_HONORIFIC))
         tts = _get_tts(hass, entry, context="routine")
         spk = _get_speakers(hass, entry)
-        await async_run_routine(hass, call, honorific, tts, spk)
+        await async_run_routine_service(hass, call, honorific, tts, spk)
 
     _register_service(
         "routine",
