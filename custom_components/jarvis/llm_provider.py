@@ -187,6 +187,34 @@ def _record_usage_shadow(resp: Any, provider_name: str, model: str) -> None:
 #   }
 
 
+# ── per-request HTTP ceilings (issue #378) ──────────────────────────────────
+# A slow or hung provider must never block a Home Assistant executor
+# (SyncWorker) thread indefinitely — that is the root cause of issue #378, where a
+# Gemini vision retry sat in the SDK's time.sleep() long enough to tie up HA's
+# executor pool and freeze the instance. Give every provider a generous *single
+# request* ceiling (cloud providers answer in seconds; a request past this is a
+# hang, not a slow success) plus a bounded retry count so the SDK can't sleep-retry
+# for minutes. Ollama overrides the timeout with its own longer local-generation
+# value (cold model loads are legitimately slow).
+PROVIDER_HTTP_TIMEOUT_S = 60.0
+PROVIDER_MAX_RETRIES = 2
+GEMINI_HTTP_TIMEOUT_MS = int(PROVIDER_HTTP_TIMEOUT_S * 1000)
+
+
+def _gemini_http_options(base_url: Optional[str]) -> dict:
+    """``http_options`` for the google-genai Client with a hard per-request
+    timeout (milliseconds, per the SDK) and a bounded retry count, so a flaky
+    Gemini can't sleep-retry for minutes inside an executor thread (issue #378).
+    ``base_url`` is preserved when set."""
+    opts: dict[str, Any] = {
+        "timeout": GEMINI_HTTP_TIMEOUT_MS,
+        "retry_options": {"attempts": PROVIDER_MAX_RETRIES},
+    }
+    if base_url:
+        opts["base_url"] = base_url
+    return opts
+
+
 class LLMProvider(ABC):
     """Abstract base for all LLM backends."""
 
@@ -250,7 +278,9 @@ class GroqProvider(LLMProvider):
             raise RuntimeError(
                 "groq package not installed — `pip install groq`"
             ) from exc
-        kwargs = {"api_key": api_key}
+        kwargs = {"api_key": api_key,
+                  "timeout": PROVIDER_HTTP_TIMEOUT_S,
+                  "max_retries": PROVIDER_MAX_RETRIES}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = Groq(**kwargs)
@@ -304,7 +334,9 @@ class OpenAIProvider(LLMProvider):
             raise RuntimeError(
                 "openai package not installed — `pip install openai`"
             ) from exc
-        kwargs = {"api_key": api_key or "not-required"}
+        kwargs = {"api_key": api_key or "not-required",
+                  "timeout": PROVIDER_HTTP_TIMEOUT_S,
+                  "max_retries": PROVIDER_MAX_RETRIES}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = OpenAI(**kwargs)
@@ -460,10 +492,24 @@ class GeminiProvider(LLMProvider):
             raise RuntimeError(
                 "google-genai package not installed — `pip install google-genai`"
             ) from exc
-        kwargs: dict[str, Any] = {"api_key": api_key}
-        if base_url:
-            kwargs["http_options"] = {"base_url": base_url}
-        self._client = genai.Client(**kwargs)
+        # Bound every request so a hung/flaky Gemini can't block an executor
+        # thread indefinitely (issue #378). Build defensively: if a SDK version
+        # rejects a hardening field, fall back so client creation never fails just
+        # because the ceiling couldn't be applied.
+        try:
+            self._client = genai.Client(
+                api_key=api_key, http_options=_gemini_http_options(base_url))
+        except Exception:
+            try:
+                opts: dict[str, Any] = {"timeout": GEMINI_HTTP_TIMEOUT_MS}
+                if base_url:
+                    opts["base_url"] = base_url
+                self._client = genai.Client(api_key=api_key, http_options=opts)
+            except Exception:
+                kwargs: dict[str, Any] = {"api_key": api_key}
+                if base_url:
+                    kwargs["http_options"] = {"base_url": base_url}
+                self._client = genai.Client(**kwargs)
 
     def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None,
               thinking=None, run_state=None):
@@ -700,7 +746,9 @@ class AnthropicProvider(LLMProvider):
             raise RuntimeError(
                 "anthropic package not installed — `pip install anthropic`"
             ) from exc
-        kwargs = {"api_key": api_key}
+        kwargs = {"api_key": api_key,
+                  "timeout": PROVIDER_HTTP_TIMEOUT_S,
+                  "max_retries": PROVIDER_MAX_RETRIES}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = Anthropic(**kwargs)
