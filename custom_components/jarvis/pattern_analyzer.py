@@ -387,11 +387,12 @@ def _is_actuating_action(action) -> bool:
 
 def normalize_suggestion_automation(stored_yaml: str) -> dict:
     """
-    Pure: turn a suggestion's stored automation JSON into structured args for
-    automation_creator.create_automation, or explain why it can't (v6.52.0).
+    Pure: turn stored automation JSON into structured advisory draft arguments.
+    ``installable`` describes the draft shape, not authorization: actual
+    automation installation is disabled by policy.
 
-    Closes the pattern-engine loop: the analyzer generates these blobs, the
-    user approves, and this converts the blob into an installable automation.
+    The analyzer generates these blobs for review; this normalizes the draft
+    without granting installation authority.
     Handles the legacy trigger/action shape the generator emits — HA modernized
     'platform'→'trigger' and 'service'→'action', so we translate both — and
     refuses the non-actionable 'manual_review' markers honestly instead of
@@ -2732,61 +2733,8 @@ def get_analyzer() -> PatternAnalyzer:
 
 
 async def install_approved_suggestion(hass, suggestion_id: int) -> dict:
-    """
-    Close the pattern-engine loop (v6.52.0): approve a suggestion AND actually
-    install its automation into Home Assistant, instead of only flagging it
-    approved. Returns a dict the caller relays:
-
-        {"ok": True, "installed": True, "automation_id": "...", "alias": "..."}
-        {"ok": True, "installed": False, "reason": "..."}   # approved, advisory
-        {"ok": False, "error": "..."}                        # not found / failed
-
-    Advisory suggestions (repeated-command notes with no concrete trigger) are
-    still marked approved — the user acknowledged them — but nothing is written
-    to HA, and the reason says so plainly.
-    """
-    analyzer = get_analyzer()
-    try:
-        sug = await hass.async_add_executor_job(analyzer.get_suggestion, suggestion_id)
-        if not sug:
-            return {"ok": False, "error": f"suggestion #{suggestion_id} not found"}
-
-        # Always record the user's approval first.
-        await hass.async_add_executor_job(analyzer.approve_suggestion, suggestion_id)
-
-        norm = normalize_suggestion_automation(sug.get("automation_yaml", ""))
-        if not norm.get("installable"):
-            return {"ok": True, "installed": False,
-                    "reason": norm.get("reason", "not installable"),
-                    "suggestion_id": suggestion_id}
-
-        from .automation_creator import create_automation
-        result = await create_automation(
-            hass,
-            alias=norm["alias"],
-            description=sug.get("description", ""),
-            trigger=norm["trigger"],
-            condition=norm.get("condition"),
-            action=norm["action"],
-            mode=norm.get("mode", "single"),
-        )
-        if result.get("success"):
-            await hass.async_add_executor_job(
-                analyzer.mark_installed, suggestion_id, result["automation_id"])
-            try:
-                from .websocket import jarvis_log
-                jarvis_log("LEARN", f"Installed learned automation "
-                                    f"'{result['alias']}' from suggestion "
-                                    f"#{suggestion_id}")
-            except Exception:
-                pass
-            return {"ok": True, "installed": True,
-                    "automation_id": result["automation_id"],
-                    "alias": result["alias"], "suggestion_id": suggestion_id}
-        return {"ok": True, "installed": False,
-                "reason": f"automation write failed: {result.get('error')}",
-                "suggestion_id": suggestion_id}
-    except Exception as exc:
-        _LOGGER.exception("install_approved_suggestion failed: %s", exc)
-        return {"ok": False, "error": str(exc)}
-
+    """Deny installation without approving, mutating or executing a suggestion."""
+    from .automation_creator import AUTOMATION_INSTALLATION_ERROR
+    _LOGGER.warning("JARVIS: %s", AUTOMATION_INSTALLATION_ERROR)
+    return {"ok": False, "installed": False,
+            "error": AUTOMATION_INSTALLATION_ERROR, "suggestion_id": suggestion_id}

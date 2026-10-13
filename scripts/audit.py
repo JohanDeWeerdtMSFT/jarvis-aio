@@ -52,7 +52,7 @@ _PARSE_CACHE: dict[pathlib.Path, ast.Module] = {}
 
 def _parse(p: pathlib.Path) -> ast.Module:
     if p not in _PARSE_CACHE:
-        _PARSE_CACHE[p] = ast.parse(p.read_text())
+        _PARSE_CACHE[p] = ast.parse(p.read_text(encoding="utf-8"))
     return _PARSE_CACHE[p]
 
 
@@ -179,7 +179,7 @@ def undefined_names_gate(files: list[pathlib.Path]) -> list[str]:
     for f in files:
         out, err = io.StringIO(), io.StringIO()
         try:
-            check(f.read_text(), str(f), Reporter(out, err))
+            check(f.read_text(encoding="utf-8"), str(f), Reporter(out, err))
         except Exception:
             continue
         for line in out.getvalue().splitlines():

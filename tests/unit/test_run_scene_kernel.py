@@ -1,8 +1,8 @@
-"""MCU Phase B (B1) — run_scene_or_script routed through the actuation envelope.
+"""Script, scene and automation dispatch remains unavailable to JARVIS.
 
-Scenes/scripts/automations have no deterministic end-state, so there is no
-verify/outcome; these pin the context read + actuation event (capability,
-area) and that an invalid target still errors without touching the envelope."""
+These tests ensure even a generic exact-entity allowlist cannot authorize those
+execution domains or produce an actuation event.
+"""
 import json
 import sys
 import types
@@ -28,32 +28,50 @@ def published(load, monkeypatch):
     return sink
 
 
-async def test_scene_activation_publishes_event(agent, fake_hass, published):
+@pytest.fixture
+def allow(load, monkeypatch):
+    """Explicitly allowlist the exact entities these tests drive."""
+    jc = load("jarvis_config")
+    ids = ["scene.movie_night", "script.bedtime", "automation.away"]
+    monkeypatch.setattr(jc, "get", lambda k, d=None:
+                        ids if k == "actuation_allowlist" else d)
+
+
+async def test_scene_script_denied_without_allowlist(agent, fake_hass, published):
+    fake_hass.states.set("script.bedtime", "off")
+    out = await agent._exec_run_scene_script(fake_hass, {"entity_id": "script.bedtime"})
+    assert "success" not in json.loads(out) or json.loads(out)["success"] is False
+    assert fake_hass.service_calls == []
+    assert published == []
+
+
+async def test_entity_allowlist_cannot_authorize_scene(agent, fake_hass, published, allow):
     fake_hass.states.set("scene.movie_night", "scening", area="living")
     out = await agent._exec_run_scene_script(
         fake_hass, {"entity_id": "scene.movie_night"})
     res = json.loads(out)
-    assert res["success"] is True and res["area"] == "living"
-    assert len(published) == 1
-    ev = published[0]
-    assert ev.type == "control.actuation"
-    assert ev.data["capability"] == "scene.turn_on"
-    assert ev.subject == "scene.movie_night"
-    assert ev.location == "living"
+    assert "not permitted" in res["error"]
+    assert fake_hass.service_calls == []
+    assert published == []
 
 
-async def test_script_uses_turn_on(agent, fake_hass, published):
+async def test_entity_allowlist_cannot_authorize_script(agent, fake_hass, published, allow):
     fake_hass.states.set("script.bedtime", "off")
-    await agent._exec_run_scene_script(fake_hass, {"entity_id": "script.bedtime"})
-    assert published[0].data["capability"] == "script.turn_on"
-    # the service call itself is script.turn_on
-    assert ("script", "turn_on") in [(c[0], c[1]) for c in fake_hass.service_calls]
+    out = await agent._exec_run_scene_script(
+        fake_hass, {"entity_id": "script.bedtime"})
+    assert "not permitted" in json.loads(out)["error"]
+    assert fake_hass.service_calls == []
+    assert published == []
 
 
-async def test_automation_uses_trigger(agent, fake_hass, published):
+async def test_entity_allowlist_cannot_authorize_automation(
+        agent, fake_hass, published, allow):
     fake_hass.states.set("automation.away", "on")
-    await agent._exec_run_scene_script(fake_hass, {"entity_id": "automation.away"})
-    assert published[0].data["capability"] == "automation.trigger"
+    out = await agent._exec_run_scene_script(
+        fake_hass, {"entity_id": "automation.away"})
+    assert "not permitted" in json.loads(out)["error"]
+    assert fake_hass.service_calls == []
+    assert published == []
 
 
 async def test_invalid_target_errors_without_envelope(agent, fake_hass, published):

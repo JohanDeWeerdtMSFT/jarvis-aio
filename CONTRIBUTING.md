@@ -38,12 +38,26 @@ This project holds to senior+ engineering output:
 
 These are the same checks the `Validate` CI workflow runs on every push:
 
+On Windows, set `PYTHONUTF8=1` before running the checks to match CI's UTF-8
+text handling (in PowerShell: `$env:PYTHONUTF8 = '1'`).
+
 ```bash
+# In a clean virtual environment, install the pinned unit/audit dependencies.
+python -m pip install -r requirements-test.txt
+
 # Full audit: bytecode compile + relative-import resolution + exported-name checks
 python3 scripts/audit.py
 
 # Unit tests
 python3 -m pytest tests/ -q
+
+# Focused safety boundaries (same selection as the CI safety-gates job)
+python3 -m pytest \
+  tests/unit/test_actuation_gate.py \
+  tests/unit/test_bootstrap.py \
+  tests/unit/test_local_fastpath_gate.py \
+  tests/unit/test_run_scene_kernel.py \
+  -q
 
 # Dashboard JavaScript parses
 node --check custom_components/jarvis/frontend/jarvis-panel.js

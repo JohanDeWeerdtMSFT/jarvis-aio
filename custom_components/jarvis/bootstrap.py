@@ -4,15 +4,16 @@ JARVIS in-process bootstrap.
 Re-homes the old add-on's post-install orchestration into the integration, so a
 HACS install gets the same zero-touch voice setup with no separate container.
 
-Runs once per version as a background task from async_setup_entry, only under
-Supervisor (installing add-ons needs the Supervisor API). Every phase is
+Scheduled as a background task from async_setup_entry. Host writes require
+separate explicit consent: ``auto_bootstrap`` for add-on/voice setup and
+``auto_pipeline`` for Assist-pipeline creation or repair. Every phase is
 idempotent and best-effort — failures are logged, never fatal.
 
   1. Ensure Piper / Whisper / openWakeWord add-ons installed + started  (Supervisor REST)
   2. Download + verify the JARVIS voice into /share/piper               (HTTP)
   3. Restart Piper so it rescans the voice                              (Supervisor REST)
   4. Reload Wyoming config entries                                      (in-process)
-  5. Create/update the JARVIS Assist pipeline + set preferred           (in-process, best-effort)
+  5. Create/update the JARVIS Assist pipeline                            (in-process, best-effort)
 
 The HA-side steps the add-on did over a WebSocket are done in-process here (we
 have `hass`), which is both cleaner and more robust than talking to HA's own
@@ -270,7 +271,8 @@ def _manual_pipeline_hint(voice_quality: str) -> None:
 
 async def _create_pipeline(hass: HomeAssistant, voice_quality: str) -> bool:
     """
-    Create/update the JARVIS Assist pipeline and set it preferred. Best-effort:
+    Create/update the JARVIS Assist pipeline without changing the preferred
+    pipeline. Best-effort:
     the assist_pipeline API varies across HA versions, so any failure logs clear
     manual steps instead of raising.
     """
@@ -340,12 +342,15 @@ async def _create_pipeline(hass: HomeAssistant, voice_quality: str) -> bool:
             _manual_pipeline_hint(voice_quality)
             return False
         # async_create_default_pipeline uses HA's default conversation agent and a
-        # default voice — set JARVIS's agent AND the installed JARVIS voice so the
-        # turn is handled by JARVIS and speaks in its own voice. tts_voice can be
-        # rejected on some HA versions, so fall back to agent-only.
+        # default voice. Set JARVIS's agent, and select its voice only when that
+        # voice is actually installed; otherwise retain Piper's configured default.
+        has_jarvis_voice = await hass.async_add_executor_job(
+            _voice_present, voice_quality)
         try:
-            await assist_pipeline.async_update_pipeline(
-                hass, pipeline, conversation_engine=agent, tts_voice=tts_voice)
+            updates = {"conversation_engine": agent}
+            if has_jarvis_voice:
+                updates["tts_voice"] = tts_voice
+            await assist_pipeline.async_update_pipeline(hass, pipeline, **updates)
         except Exception as exc:
             try:
                 await assist_pipeline.async_update_pipeline(
@@ -393,6 +398,16 @@ def _current_version() -> str:
 
 # ── Orchestration ────────────────────────────────────────────────────────────
 
+def is_opted_in(key: str) -> bool:
+    """True only when the config value is exactly boolean True (default off).
+
+    Voice add-on installation and Assist-pipeline changes are side effects on the
+    host, so a missing, malformed, or string value must never enable them.
+    """
+    from . import jarvis_config
+    return jarvis_config.get(key, False) is True
+
+
 async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> dict:
     """
     Full bootstrap. Idempotent + best-effort. Returns a status dict. Safe to call
@@ -403,7 +418,7 @@ async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> di
     status = {"supervised": False, "addons_ok": False, "voice_ok": False,
               "wyoming_ok": False, "pipeline_ok": False, "skipped": None}
 
-    if not bool(jarvis_config.get("auto_bootstrap", True)):
+    if not is_opted_in("auto_bootstrap"):
         status["skipped"] = "auto_bootstrap disabled"
         return status
 
@@ -421,7 +436,7 @@ async def async_run_bootstrap(hass: HomeAssistant, *, force: bool = False) -> di
 
     voice_quality = str(jarvis_config.get("voice_quality", "medium"))
     tts_provider = str(jarvis_config.get("tts_provider", "piper_jarvis"))
-    auto_pipeline = bool(jarvis_config.get("auto_pipeline", True))
+    auto_pipeline = is_opted_in("auto_pipeline")
 
     _LOGGER.info("JARVIS bootstrap: starting (version=%s quality=%s)", version, voice_quality)
 
@@ -474,11 +489,13 @@ async def async_ensure_pipeline_agent(hass: HomeAssistant) -> None:
     conversation agent on HA's default / an LLM integration, and then JARVIS's
     reply routing — delivering the spoken reply to the paired room/Cast speaker —
     never runs, because a different agent handled the turn (and no JARVIS turn is
-    logged). This corrects it: idempotent (no-op when already right), runs on every
-    setup (NOT marker-gated, NOT Supervisor-gated), never raises. Matches a JARVIS
-    pipeline by its name OR its JARVIS Piper voice, so it works no matter what the
-    pipeline is called.
+    logged). This repairs an existing JARVIS pipeline or creates one when none is
+    found. It runs only when ``auto_pipeline`` is explicitly enabled (NOT
+    marker-gated, NOT Supervisor-gated), is idempotent, and never raises. Matches
+    a JARVIS pipeline by its name OR its JARVIS Piper voice.
     """
+    if not is_opted_in("auto_pipeline"):
+        return
     try:
         from homeassistant.components import assist_pipeline
     except Exception:
@@ -490,11 +507,13 @@ async def async_ensure_pipeline_agent(hass: HomeAssistant) -> None:
         pipelines = list(assist_pipeline.async_get_pipelines(hass))
     except Exception:
         return
+    jarvis_pipelines = []
     for p in pipelines:
         name = (getattr(p, "name", "") or "").lower()
         voice = (getattr(p, "tts_voice", "") or "").lower()
         if "jarvis" not in name and "jarvis" not in voice:
             continue
+        jarvis_pipelines.append(p)
         if getattr(p, "conversation_engine", None) == agent:
             continue
         try:
@@ -508,27 +527,35 @@ async def async_ensure_pipeline_agent(hass: HomeAssistant) -> None:
             _LOGGER.warning(
                 "JARVIS: couldn't set pipeline '%s' conversation agent: %s",
                 getattr(p, "name", "?"), exc)
+    if not jarvis_pipelines:
+        from . import jarvis_config
+        voice_quality = str(jarvis_config.get("voice_quality", "medium"))
+        await _create_pipeline(hass, voice_quality)
 
 
 def schedule_bootstrap(hass: HomeAssistant) -> None:
     """
     Launch the bootstrap as a background task once HA has finished starting.
-    The pipeline-agent repair runs on every start (everywhere); the add-on/voice
-    bootstrap is Supervisor-only and marker-gated. Called from async_setup_entry.
+    The two host-write paths have independent opt-ins; missing or malformed
+    settings leave both disabled. Called from async_setup_entry.
     """
     async def _runner(_event=None) -> None:
-        # Always, first: point JARVIS's voice pipeline at JARVIS's own agent so its
-        # reply routing runs. Not marker-gated and not behind the add-on phases, so
-        # it can't be raced or skipped the way the once-per-version bootstrap can.
-        try:
-            await async_ensure_pipeline_agent(hass)
-        except Exception as exc:
-            _LOGGER.debug("JARVIS: pipeline-agent repair error: %s", exc)
-        if is_supervised():
+        # Finish an explicitly requested stack bootstrap first, so pipeline
+        # creation can use the voice it just installed.
+        bootstrap_checked_pipeline = False
+        if is_supervised() and is_opted_in("auto_bootstrap"):
             try:
-                await async_run_bootstrap(hass)
+                result = await async_run_bootstrap(hass)
+                bootstrap_checked_pipeline = result["skipped"] is None
             except Exception as exc:
                 _LOGGER.warning("JARVIS bootstrap: unexpected error: %s", exc)
+        # Pipeline consent is independent and remains usable with manually
+        # installed engines or when bootstrap was already complete.
+        if is_opted_in("auto_pipeline") and not bootstrap_checked_pipeline:
+            try:
+                await async_ensure_pipeline_agent(hass)
+            except Exception as exc:
+                _LOGGER.debug("JARVIS: pipeline-agent repair error: %s", exc)
 
     if hass.is_running:
         hass.async_create_background_task(_runner(), "jarvis_bootstrap")

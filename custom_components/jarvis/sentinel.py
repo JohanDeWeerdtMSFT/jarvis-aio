@@ -332,15 +332,11 @@ class JarvisSentinel:
         try:
             notify_svc = jarvis_config.runtime_get(
                 self.hass, self._entry, "notify_service", "")
-            if notify_svc:
-                domain, service = notify_svc.split(".", 1)
-                await self.hass.services.async_call(
-                    domain, service,
-                    {"title": "JARVIS", "message": text},
-                    blocking=False,
-                )
+            from .output_dispatch import async_notify
+            await async_notify(self.hass, notify_svc,
+                               {"title": "JARVIS", "message": text})
         except Exception as exc:
-            _LOGGER.debug("Sentinel phone notify failed: %s", exc)
+            _LOGGER.warning("Sentinel phone notify failed: %s", exc)
 
     async def _localize(self, text: str) -> str:
         """Translate a static alert template into the household output language.

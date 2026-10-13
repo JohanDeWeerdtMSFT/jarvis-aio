@@ -81,10 +81,22 @@ async def test_unlock_defers_to_agent_when_confirmation_enabled(load, monkeypatc
 async def test_unlock_actuates_fast_when_confirmation_disabled(load, monkeypatch):
     le = load("local_engine")
     _install_vc(monkeypatch, protected=False)
+    jc = load("jarvis_config")
+    monkeypatch.setattr(jc, "get", lambda k, d=None:
+                        {"lock.front_door": ["lock.unlock"]}
+                        if k == "actuation_service_allowlist" else d)
     h = _hass_with_lock()
     result = await le.try_local(h, "unlock the front door", "sir")
     assert result is not None and result.handled
     assert ("lock", "unlock", {"entity_id": "lock.front_door"}) in h.service_calls
+
+
+async def test_unlock_never_actuates_without_allowlist(load, monkeypatch):
+    le = load("local_engine")
+    _install_vc(monkeypatch, protected=False)   # confirmation off is not authorization
+    h = _hass_with_lock()
+    await le.try_local(h, "unlock the front door", "sir")
+    assert not any(c[0] == "lock" and c[1] == "unlock" for c in h.service_calls)
 
 
 async def test_bulk_unlock_defers_when_confirmation_enabled(load, monkeypatch):

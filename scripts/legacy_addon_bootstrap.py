@@ -3,15 +3,17 @@
 JARVIS AIO bootstrap orchestrator.
 Completes post-install steps programmatically so the user touches nothing:
 
-  1. Ensure Piper / Whisper / openWakeWord addons are installed + started
+  1. (Explicit opt-in) Ensure Piper / Whisper / openWakeWord addons are installed + started
   2. Download the Jarvis voice model (integrity-verified)
   3. RESTART the Piper addon so it re-scans /share/piper for the new voice
   4. Reload Wyoming integration so HA reconnects with the updated voice list
   5. Create the JARVIS Assist pipeline (best-effort — HA WS schemas vary)
-  6. Set JARVIS pipeline as default
+  6. Leave the user's preferred pipeline unchanged
 
 Uses ONLY Supervisor REST + HA WebSocket proxy. Never touches .storage directly.
-All steps idempotent. Each failure is logged but does not abort the chain.
+Both voice setup and pipeline changes are disabled unless their respective
+JARVIS_AUTO_BOOTSTRAP / JARVIS_AUTO_PIPELINE flags are exactly "true".
+All enabled steps are idempotent. Each failure is logged but does not abort.
 """
 from __future__ import annotations
 
@@ -363,7 +365,7 @@ async def reload_wyoming() -> None:
 
 async def create_jarvis_pipeline(voice_quality: str) -> bool:
     """
-    Build the JARVIS pipeline and set it as preferred.
+    Build or update the JARVIS pipeline without changing the preferred pipeline.
     Best-effort: if any HA WebSocket command fails, logs and returns False.
     """
     try:
@@ -472,15 +474,7 @@ async def create_jarvis_pipeline(voice_quality: str) -> bool:
             log(f"Pipeline API error: {result[0].get('error')}", "WARN")
             return False
 
-        # Set as preferred
-        pref_result = await ws_call([{
-            "type": "assist_pipeline/pipeline/set_preferred",
-            "pipeline_id": pipeline_id,
-        }])
-        if pref_result and not pref_result[0].get("success", True):
-            log(f"set_preferred error (non-fatal): {pref_result[0].get('error')}", "WARN")
-
-        log(f"JARVIS pipeline ({pipeline_id}) is now default.")
+        log(f"JARVIS pipeline ({pipeline_id}) is ready; preferred pipeline unchanged.")
         return True
 
     except Exception as exc:
@@ -506,7 +500,8 @@ async def main() -> int:
     honorific     = os.environ.get("JARVIS_HONORIFIC", "sir")
     voice_quality = os.environ.get("JARVIS_VOICE_QUALITY", "medium")
     tts_provider  = os.environ.get("JARVIS_TTS_PROVIDER", "piper_jarvis")
-    auto_pipeline = os.environ.get("JARVIS_AUTO_PIPELINE", "true").lower() == "true"
+    auto_bootstrap = os.environ.get("JARVIS_AUTO_BOOTSTRAP") == "true"
+    auto_pipeline = os.environ.get("JARVIS_AUTO_PIPELINE") == "true"
 
     status = {
         "addons_ok":       False,
@@ -514,6 +509,8 @@ async def main() -> int:
         "agent_ok":        False,
         "pipeline_ok":     False,
         "voice_quality":   voice_quality,
+        "auto_bootstrap":  auto_bootstrap,
+        "auto_pipeline":   auto_pipeline,
     }
     _write_status(status)  # Baseline: everything false
 
@@ -523,77 +520,83 @@ async def main() -> int:
         return 1
 
     log(f"Bootstrap start: honorific={honorific} quality={voice_quality} "
-        f"provider={tts_provider} auto_pipeline={auto_pipeline}")
+        f"provider={tts_provider} auto_bootstrap={auto_bootstrap} "
+        f"auto_pipeline={auto_pipeline}")
 
-    # ── Phase 1: Prerequisite addons ─────────────────────────────────────────
-    log("─" * 60)
-    log("Phase 1/5: Ensure prerequisite addons installed + running")
-    addons_all_ok = True
-    for slug, name in REQUIRED_ADDONS.items():
-        if not ensure_addon(slug, name):
-            addons_all_ok = False
-    status["addons_ok"] = addons_all_ok
-    _write_status(status)
-
-    # ── Phase 2: Voice model ─────────────────────────────────────────────────
-    voice_ok = False
-    if tts_provider == "piper_jarvis":
+    if auto_bootstrap:
+        # ── Phase 1: Prerequisite addons ─────────────────────────────────────
         log("─" * 60)
-        log("Phase 2/5: Download JARVIS voice model")
-        voice_ok = download_jarvis_voice(voice_quality)
+        log("Phase 1/5: Ensure prerequisite addons installed + running")
+        addons_all_ok = True
+        for slug, name in REQUIRED_ADDONS.items():
+            if not ensure_addon(slug, name):
+                addons_all_ok = False
+        status["addons_ok"] = addons_all_ok
+        _write_status(status)
+
+        # ── Phase 2: Voice model ─────────────────────────────────────────────
+        voice_ok = False
+        if tts_provider == "piper_jarvis":
+            log("─" * 60)
+            log("Phase 2/5: Download JARVIS voice model")
+            voice_ok = download_jarvis_voice(voice_quality)
+        else:
+            voice_ok = True  # not applicable
+        status["voice_ok"] = voice_ok
+        _write_status(status)
+
+        # ── Phase 3: Restart Piper addon (so it rescans /share/piper) ────────
+        if tts_provider == "piper_jarvis" and voice_ok:
+            log("─" * 60)
+            log("Phase 3/5: Restart Piper addon to load the new voice")
+            if addon_restart("core_piper", "Piper TTS"):
+                if wait_for_addon_state("core_piper", "started", tries=30, sleep_s=2):
+                    log("Piper restarted with Jarvis voice loaded.")
+                else:
+                    log("Piper restart requested but state didn't reach 'started'.", "WARN")
+            await asyncio.sleep(5)
+
+        # ── Phase 4: Reload Wyoming integration ──────────────────────────────
+        log("─" * 60)
+        log("Phase 4/5: Reload Wyoming integration")
+        await reload_wyoming()
     else:
-        voice_ok = True  # not applicable
-    status["voice_ok"] = voice_ok
-    _write_status(status)
+        log("Voice add-on bootstrap skipped (JARVIS_AUTO_BOOTSTRAP is not exactly 'true').")
 
-    # ── Phase 3: Restart Piper addon (so it rescans /share/piper) ────────────
-    if tts_provider == "piper_jarvis" and voice_ok:
-        log("─" * 60)
-        log("Phase 3/5: Restart Piper addon to load the new voice")
-        if addon_restart("core_piper", "Piper TTS"):
-            if wait_for_addon_state("core_piper", "started", tries=30, sleep_s=2):
-                log("Piper restarted with Jarvis voice loaded.")
-            else:
-                log("Piper restart requested but state didn't reach 'started'.", "WARN")
-        # Give Piper a moment to fully initialize before Wyoming reconnects
-        await asyncio.sleep(5)
-
-    # ── Phase 4: Reload Wyoming integration ──────────────────────────────────
-    log("─" * 60)
-    log("Phase 4/5: Reload Wyoming integration")
-    await reload_wyoming()
-
-    # Wait for JARVIS custom component to register its conversation agent.
-    # On first install HA has to pip-install groq, which can take 30-60s.
-    log("Waiting for JARVIS conversation agent to register (up to 120s)...")
+    # Pipeline consent is independent: with only auto_pipeline enabled, discover
+    # the already-registered agent without installing or starting any add-ons.
     agent_found = False
     last_agents = []
-    for attempt in range(40):  # 40 × 3s = 120s
-        try:
-            res = await ws_call([{"type": "conversation/agent/list"}])
-            if res:
-                agents_raw = res[0].get("result") or {}
-                agents = agents_raw if isinstance(agents_raw, list) else agents_raw.get("agents", [])
-                last_agents = [str(a.get("id") or a.get("agent_id") or "") for a in agents]
-                if any("jarvis" in a.lower() for a in last_agents):
-                    log(f"JARVIS conversation agent ready (after {attempt * 3}s).")
-                    agent_found = True
-                    break
-        except Exception:
-            pass
-        if attempt > 0 and attempt % 10 == 0:
-            log(f"  Still waiting... ({attempt * 3}s elapsed, agents: {last_agents})")
-        await asyncio.sleep(3)
+    if auto_pipeline:
+        log("Waiting for JARVIS conversation agent to register (up to 120s)...")
+        for attempt in range(40):  # 40 × 3s = 120s
+            try:
+                res = await ws_call([{"type": "conversation/agent/list"}])
+                if res:
+                    agents_raw = res[0].get("result") or {}
+                    agents = agents_raw if isinstance(agents_raw, list) else agents_raw.get("agents", [])
+                    last_agents = [str(a.get("id") or a.get("agent_id") or "") for a in agents]
+                    if any("jarvis" in a.lower() for a in last_agents):
+                        log(f"JARVIS conversation agent ready (after {attempt * 3}s).")
+                        agent_found = True
+                        break
+            except Exception:
+                pass
+            if attempt > 0 and attempt % 10 == 0:
+                log(f"  Still waiting... ({attempt * 3}s elapsed, agents: {last_agents})")
+            await asyncio.sleep(3)
 
-    if not agent_found:
-        log("JARVIS conversation agent did not register within 120s timeout.", "WARN")
-        log(f"Agents HA has registered: {last_agents}", "WARN")
-        log("Common causes:", "WARN")
-        log("  1. HA failed to pip-install 'groq' package (check HA core logs)", "WARN")
-        log("  2. Python error in custom_components/jarvis — check logs for", "WARN")
-        log("     'Error importing custom_components.jarvis' or similar", "WARN")
-        log("  3. jarvis_config.json has a malformed field", "WARN")
-        log("Try: Settings → System → Logs, search 'jarvis' for the actual error.", "WARN")
+        if not agent_found:
+            log("JARVIS conversation agent did not register within 120s timeout.", "WARN")
+            log(f"Agents HA has registered: {last_agents}", "WARN")
+            log("Common causes:", "WARN")
+            log("  1. HA failed to pip-install 'groq' package (check HA core logs)", "WARN")
+            log("  2. Python error in custom_components/jarvis — check logs for", "WARN")
+            log("     'Error importing custom_components.jarvis' or similar", "WARN")
+            log("  3. jarvis_config.json has a malformed field", "WARN")
+            log("Try: Settings → System → Logs, search 'jarvis' for the actual error.", "WARN")
+    else:
+        log("Pipeline maintenance skipped (JARVIS_AUTO_PIPELINE is not exactly 'true').")
     status["agent_ok"] = agent_found
     _write_status(status)
 

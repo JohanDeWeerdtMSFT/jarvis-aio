@@ -157,7 +157,7 @@ def test_idle_sensor_resets_sustain_and_running_sensor_resets_settle(monitor, mo
     assert sensor.settle_start == 0.0
 
 
-def test_native_completion_announces_once_and_resets_for_next_cycle(monitor):
+def test_native_completion_announces_once_and_resets_for_next_cycle(monitor, monkeypatch):
     calls = []
 
     async def announce(sensor, label):
@@ -172,7 +172,7 @@ def test_native_completion_announces_once_and_resets_for_next_cycle(monitor):
     monitor._MON.natives["sensor.washer_run_state"] = monitor._NativeAppliance(
         "sensor.washer_run_state", "Washer", monitor.ApplianceType.WASHER,
         frozenset({"finished"}), last_state="running")
-    monitor._announce_done = announce
+    monkeypatch.setattr(monitor, "_announce_done", announce)
 
     def event(state):
         monitor._on_state_changed(types.SimpleNamespace(data={
@@ -195,7 +195,7 @@ def test_power_sensor_event_converts_kw_and_ignores_invalid_states(monitor, monk
         readings.append(watts)
         return None
 
-    monitor._process_reading = process_reading
+    monkeypatch.setattr(monitor, "_process_reading", process_reading)
     monitor._MON.running = True
     monitor._MON.sensors["sensor.washer_power"] = monitor._SensorState(
         "sensor.washer_power", "Washer", monitor.ApplianceType.WASHER)
@@ -230,7 +230,7 @@ def test_whole_home_delta_tracks_jump_and_announces_matching_fingerprint(
     monitor._MON.delta = monitor._DeltaTracker(
         "sensor.whole_home_power", baseline_w=100,
         samples=[100] * monitor._DELTA_MAX_SAMPLES)
-    monitor._announce_done = announce
+    monkeypatch.setattr(monitor, "_announce_done", announce)
 
     monitor._process_delta(100)
     monitor._process_delta(500)
@@ -263,7 +263,7 @@ def test_whole_home_delta_matches_declared_appliance_and_learns(monitor, monkeyp
     monitor._MON.delta = monitor._DeltaTracker(
         "sensor.whole_home_power", baseline_w=100,
         samples=[100] * monitor._DELTA_MAX_SAMPLES)
-    monitor._announce_done = announce
+    monkeypatch.setattr(monitor, "_announce_done", announce)
 
     monitor._process_delta(500)
     now[0] = 110.0

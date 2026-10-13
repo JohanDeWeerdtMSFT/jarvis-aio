@@ -1,25 +1,13 @@
+## [Unreleased] — Draft safety foundation (not release-ready)
+
+- Bootstrap is opt-in: `auto_bootstrap` / `auto_pipeline` default off and require a strict boolean `true`; default startup no longer installs add-ons or rewrites Assist pipelines.
+- New `actuation_gate.py`: deterministic default-deny authorization at the service-dispatch boundary (`actuation.guarded_call`, `execute_actuator`, `execute_safety_actuator`, `execute_plan`). Sensitive entities require exact entity/service pairs; script/scene/automation dispatch remains denied. HA Assist API tools are read-only; `ha_api_tool_allowlist` no longer enables controls that bypass per-entity authorization. See `docs/dispatch-inventory.md`.
+- After web/mail/document/calendar/camera output enters a reasoning loop, control tools are removed and refused for the rest of that loop.
+- Behaviour change: unlock/open, scripts, scenes and automations no longer run without an allowlist entry. Securing actions still fail open to a direct call, but only if the gate authorizes them.
+- Retrieval provenance is cross-turn: grounded reasoning is read-only for every loop (history, summaries, retries); added end-to-end tests for friendly-name/tool-output injection, replay, summaries and slim retry; summaries are labelled as untrusted data.
+- Remaining review gaps: downstream automation behavior, third-party dispatch paths and physical-device acceptance remain unverified. Isolated real-HA tests cover persisted aliases and area expansion through the final gate.
+
 ## [9.18.1] — Ollama setup hardening (edge cases from the #383 review)
-
-Follow-up hardening to the 9.18.0 Ollama fix, from a stress-test of the full
-setup flow. No change for the common case; these close three gaps found at the
-edges:
-
-- **Reverse-proxy URLs now get `/v1` too.** The OpenAI-compatible path was only
-  auto-appended to a bare `host:11434`. A proxied Ollama on another port or host
-  without a path (e.g. `https://ollama.example.com`) was left without `/v1`, so the
-  probe hit the wrong endpoint. `/v1` is now appended to any path-less base URL,
-  while a URL that already has a path (`…/v1`, or a deliberate proxy subpath like
-  `…/ollama`) is left untouched.
-- **Clearer "no models" message.** If setup reaches model selection with an Ollama
-  server that has no models pulled, the error now says to pull one first
-  (`ollama pull …`) instead of only pointing at the endpoint.
-- **Provider name is matched case-insensitively** in the connection check, so a
-  capitalised `Ollama` still takes the reachability path rather than a chat ping.
-
-- **Tests** cover the URL normalization (bare host, reverse-proxy origin, and
-  explicit-path pass-through) and the case-insensitive provider match.
-- **Version** — manifest 9.18.0 → **9.18.1** (patch: reliability hardening, no new
-  feature).
 
 ## [9.18.0] — Fix: Ollama setup validation no longer rejects a reachable server (issue #383)
 

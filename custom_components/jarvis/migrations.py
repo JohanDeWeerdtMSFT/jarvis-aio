@@ -38,8 +38,9 @@ _LOGGER = logging.getLogger(__name__)
 # v6 = added observer mode (proactive reasoning, Gemini tier providers, sleep detection)
 # v7 = area-registry-driven routing; flat entity lists removed in favor of
 #      HA area registry + bedroom_areas toggle + broadcast_group entity
+# v8 = voice add-on bootstrap and Assist pipeline changes require explicit consent
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 # ─── Migrations ──────────────────────────────────────────────────────────────
@@ -173,6 +174,21 @@ def migrate_6_to_7(data: dict, options: dict) -> tuple[dict, dict]:
     return data, options
 
 
+def migrate_7_to_8(data: dict, options: dict) -> tuple[dict, dict]:
+    """v7 → v8: make voice setup and pipeline maintenance explicit opt-ins.
+
+    Keep existing values so an explicit choice survives upgrade. Missing values
+    are not consent and therefore remain disabled.
+    """
+    options.setdefault("auto_bootstrap", False)
+    options.setdefault("auto_pipeline", False)
+    _LOGGER.info(
+        "JARVIS migration v7→v8: voice bootstrap and pipeline maintenance "
+        "disabled unless explicitly enabled"
+    )
+    return data, options
+
+
 # (source_version, migration_function)
 MIGRATIONS: list[tuple[int, Callable]] = [
     (1, migrate_1_to_2),
@@ -181,6 +197,7 @@ MIGRATIONS: list[tuple[int, Callable]] = [
     (4, migrate_4_to_5),
     (5, migrate_5_to_6),
     (6, migrate_6_to_7),
+    (7, migrate_7_to_8),
 ]
 
 

@@ -64,7 +64,12 @@ async def test_lights_off_routes_each_target_through_seam(ir, load, monkeypatch)
     assert ("light.turn_off", "light.b") in caps
 
 
-async def test_secure_area_marks_ledger_complete_per_entity(ir):
+async def test_secure_area_marks_ledger_complete_per_entity(ir, load, monkeypatch):
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: {
+        "lock.front": ["lock.lock"],
+        "cover.garage": ["cover.close_cover"],
+    } if key == "actuation_service_allowlist" else default)
     completed = []
 
     class FakeLedger:

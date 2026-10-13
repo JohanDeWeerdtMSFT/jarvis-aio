@@ -36,7 +36,7 @@ from .camera import (
 )
 from .briefing import async_briefing
 from .scenes import async_activate_by_intent
-from .routines import async_run_routine, list_routines
+from .routines import async_run_routine_service, list_routines
 from .reminders import async_add_reminder_service, ReminderWatcher
 from .recognition import register_recognition_listener
 from .summary import async_summarise
@@ -1309,7 +1309,7 @@ def _register_services(
         honorific = entry.options.get(CONF_HONORIFIC, entry.data.get(CONF_HONORIFIC, DEFAULT_HONORIFIC))
         tts = _get_tts(hass, entry, context="routine")
         spk = _get_speakers(hass, entry)
-        await async_run_routine(hass, call, honorific, tts, spk)
+        await async_run_routine_service(hass, call, honorific, tts, spk)
 
     _register_service(
         "routine",
@@ -1579,7 +1579,8 @@ def _register_services(
     _register_service("observer_status", _observer_status)
 
     async def _create_automation(call: ServiceCall) -> None:
-        """Create an HA automation from service call data."""
+        """Surface installation policy denial as an HA service error."""
+        from homeassistant.exceptions import HomeAssistantError
         from .automation_creator import create_automation
         result = await create_automation(
             hass,
@@ -1590,10 +1591,7 @@ def _register_services(
             action=call.data.get("action"),
             mode=call.data.get("mode", "single"),
         )
-        if result.get("success"):
-            hass.bus.async_fire("jarvis_automation_created", result)
-        else:
-            _LOGGER.warning("Automation creation failed: %s", result.get("error"))
+        raise HomeAssistantError(result["error"])
 
     _register_service("create_automation", _create_automation)
 
@@ -1646,22 +1644,9 @@ def _register_services(
         notify_svc = rc.get("notify_service") or entry.options.get(
             "notify_service", entry.data.get("notify_service", "")
         )
-        if not notify_svc:
-            _LOGGER.warning("Test notify: no notify_service configured")
-            return
-        try:
-            domain, service = notify_svc.split(".", 1)
-            await hass.services.async_call(
-                domain, service,
-                {
-                    "title": "JARVIS",
-                    "message": "This is a test notification from JARVIS. If you see this, phone notifications are working.",
-                },
-                blocking=False,
-            )
-            _LOGGER.info("Test notification sent via %s", notify_svc)
-        except Exception as exc:
-            _LOGGER.warning("Test notification failed: %s", exc)
+        from .output_dispatch import async_test_notify
+        await async_test_notify(hass, notify_svc)
+        _LOGGER.info("Test notification handler completed via %s", notify_svc)
 
     _register_service("test_notify", _test_notify)
 

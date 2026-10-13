@@ -57,7 +57,13 @@ async def test_each_step_runs_through_kernel_authority(agent, fake_hass, publish
     assert authority_calls == [("light", "turn_on", True), ("switch", "turn_on", True)]
 
 
-async def test_multi_step_success_runs_all(agent, fake_hass, published):
+async def test_multi_step_success_runs_all(agent, fake_hass, published, load, monkeypatch):
+    config = load("jarvis_config")
+    original_get = config.get
+    monkeypatch.setattr(config, "get", lambda key, default=None:
+                        {"switch.fan": ["switch.turn_on"]}
+                        if key == "actuation_service_allowlist"
+                        else original_get(key, default))
     fake_hass.states.set("light.den", "off")
     fake_hass.states.set("switch.fan", "off")
     out = await agent._exec_execute_plan(fake_hass, {

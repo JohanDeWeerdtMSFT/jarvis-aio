@@ -4290,10 +4290,7 @@ async def request_lockdown(on: bool, reason: str = "requested", hass: HomeAssist
 async def _push_notification(hass, config, message, action_type, snapshot_url=None):
     """Push notification to phone, with an optional snapshot image (v6.69.0)."""
     notify_svc = config.get("notify_service", "")
-    if not notify_svc:
-        return
     try:
-        svc_domain, svc_name = notify_svc.split(".", 1)
         data = {"message": message,
                 "title": _notify_i18n().title(action_type, _hass_lang(hass))}
         img_data = _notification_image_data(hass, snapshot_url)
@@ -4304,9 +4301,11 @@ async def _push_notification(hass, config, message, action_type, snapshot_url=No
             merged = img_data
         if merged:
             data["data"] = merged
-        await hass.services.async_call(svc_domain, svc_name, data, blocking=False)
+        from .output_dispatch import async_notify
+        return await async_notify(hass, notify_svc, data)
     except Exception as exc:
-        _LOGGER.debug("Cognitive: push notification failed: %s", exc)
+        _LOGGER.warning("Cognitive: push notification failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 def _notification_image_data(hass, snapshot_url):
@@ -4335,10 +4334,9 @@ def _notification_image_data(hass, snapshot_url):
 
 
 async def _notify_all_devices(hass, config, message, action_type, snapshot_url=None):
-    """Push to EVERY connected device — every `notify.mobile_app_*` service the
-    HA companion app registered — plus a persistent notification for confirmed
-    intrusions. Attaches a snapshot image when provided (v6.69.0). Falls back to
-    the single configured service if no per-device services exist."""
+    """Push only to approved discovered endpoints; authorize fallback separately.
+    Fixed persistent notifications remain available for confirmed intrusions."""
+    from .output_dispatch import async_notify
     title = _notify_i18n().title(action_type, _hass_lang(hass))
     img_data = _notification_image_data(hass, snapshot_url)
     try:
@@ -4356,16 +4354,19 @@ async def _notify_all_devices(hass, config, message, action_type, snapshot_url=N
                 payload = {"message": message, "title": title}
                 if merged:
                     payload["data"] = merged
-                await hass.services.async_call("notify", name, payload, blocking=False)
-                sent += 1
+                result = await async_notify(hass, f"notify.{name}", payload)
+                if result["ok"]:
+                    sent += 1
             except Exception as exc:
-                _LOGGER.debug("notify.%s failed: %s", name, exc)
+                _LOGGER.warning("notify.%s failed: %s", name, exc)
     except Exception as exc:
-        _LOGGER.debug("Cognitive: enumerate notify services failed: %s", exc)
+        _LOGGER.warning("Cognitive: enumerate notify services failed: %s", exc)
 
     # Fall back to the configured single service if nothing device-specific fired.
     if sent == 0:
-        await _push_notification(hass, config, message, action_type, snapshot_url)
+        result = await _push_notification(hass, config, message, action_type, snapshot_url)
+        if result["ok"]:
+            sent += 1
 
     # Always-visible catch-all for a confirmed intrusion.
     if action_type == "intrusion_confirmed":
@@ -4377,6 +4378,8 @@ async def _notify_all_devices(hass, config, message, action_type, snapshot_url=N
                 blocking=False)
         except Exception as exc:
             _LOGGER.warning("JARVIS: intrusion notification failed to post: %s", exc)
+    return ({"ok": True, "sent": sent} if sent
+            else {"ok": False, "sent": 0, "error": "No approved push endpoint delivered"})
 
 
 async def _execute_action_data(hass, action_data: dict) -> bool:

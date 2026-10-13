@@ -652,7 +652,7 @@ def test_get_hass_api_returns_api_or_degrades_to_chat_only(monkeypatch):
     assert asyncio.run(agent._get_hass_api(user_input)) is None
 
 
-def test_agentic_loop_executes_tool_and_returns_followup_text(monkeypatch):
+def test_agentic_loop_executes_read_only_tool_and_returns_followup_text(monkeypatch):
     import asyncio
 
     mod = _load_conversation_module(monkeypatch)
@@ -661,7 +661,7 @@ def test_agentic_loop_executes_tool_and_returns_followup_text(monkeypatch):
     class FakeClient:
         def __init__(self):
             self.results = [
-                {"tool_calls": [{"id": "call-1", "name": "turn_on",
+                {"tool_calls": [{"id": "call-1", "name": "HassGetState",
                                  "args": {"entity_id": "light.study"}}], "text": ""},
                 {"tool_calls": [], "text": "The study light is on."},
             ]
@@ -671,16 +671,16 @@ def test_agentic_loop_executes_tool_and_returns_followup_text(monkeypatch):
 
     class FakeApi:
         tools = [types.SimpleNamespace(
-            name="turn_on", description="Turn on an entity", parameters={})]
+            name="HassGetState", description="Read an entity", parameters={})]
 
         async def async_call_tool(self, tool_input):
-            assert tool_input.tool_name == "turn_on"
+            assert tool_input.tool_name == "HassGetState"
             assert tool_input.tool_args == {"entity_id": "light.study"}
-            return {"success": True}
+            return {"state": "on"}
 
     agent._client = FakeClient()
     user_input = types.SimpleNamespace(
-        text="turn on the study light", language="en", device_id=None, context={})
+        text="Is the study light on?", language="en", device_id=None, context={})
     result = asyncio.run(agent._agentic_loop(
         [{"role": "user", "content": user_input.text}], "persona", FakeApi(), user_input))
 

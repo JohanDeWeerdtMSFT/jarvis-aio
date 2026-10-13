@@ -31,6 +31,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .paths import config_path
+from .migrations import CURRENT_SCHEMA_VERSION
 from .const import (
     CONF_API_KEY,
     CONF_HONORIFIC,
@@ -347,7 +348,7 @@ class JarvisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_HONORIFIC: self._finish_honorific,
                     "llm_provider": provider,
                     "llm_base_url": base_url,
-                    "schema_version": 7,
+                    "schema_version": CURRENT_SCHEMA_VERSION,
                 },
             )
         return self.async_show_form(
@@ -408,7 +409,7 @@ class JarvisConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_HONORIFIC: import_data.get(CONF_HONORIFIC, import_data.get("honorific", DEFAULT_HONORIFIC)),
                 "llm_provider": provider,
                 "llm_base_url": base_url,
-                "schema_version": 7,
+                "schema_version": CURRENT_SCHEMA_VERSION,
             },
             options={k: v for k, v in import_data.items()
                      if k not in ha_secrets.CREDENTIAL_KEYS
@@ -475,8 +476,20 @@ class JarvisOptionsFlow(OptionsFlow):
         """Landing menu — jump to any section directly."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["llm", "core", "routing", "observer", "identity", "email", "agents"],
+            menu_options=["llm", "core", "routing", "observer", "identity", "email", "agents", "voice"],
         )
+
+    async def async_step_voice(self, user_input: dict[str, Any] | None = None) -> dict:
+        """Voice — separately consent to installing add-ons and editing pipelines."""
+        if user_input is not None:
+            return await self._save_section(user_input)
+        schema = vol.Schema({
+            vol.Optional("auto_bootstrap", description=self._sv("auto_bootstrap", False)):
+                selector.BooleanSelector(),
+            vol.Optional("auto_pipeline", description=self._sv("auto_pipeline", False)):
+                selector.BooleanSelector(),
+        })
+        return self.async_show_form(step_id="voice", data_schema=schema)
 
     async def async_step_agents(self, user_input: dict[str, Any] | None = None) -> dict:
         """Agents — specialised sub-agents and related autonomy toggles.

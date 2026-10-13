@@ -5,9 +5,9 @@ Phase H's exit criterion is that **every consequential (world-mutating) actuatio
 converges on the universal actuator seam** (``actuation.execute_actuator`` /
 ``execute_safety_actuator``), so each one is planned, event-published and
 journaled. This gate is the honest, mechanical proof of that: it AST-scans the
-integration for ``*.services.async_call(...)`` and fails CI if any call that can
-change the physical state of the home is made **outside** the seam and is not
-explicitly classified here.
+integration for ``*.services.async_call(...)`` and
+``hass_api.async_call_tool(...)``. It fails CI if a direct service call or
+indirect Assist API tool dispatch is outside the exact reviewed inventory.
 
 It is the runtime sibling of the 8.34.0 governance gate (which classifies agent
 *tools*): same "classify or wire" philosophy, applied to raw service calls. A new
@@ -15,16 +15,10 @@ direct ``light``/``lock``/``cover``/``climate``/… call therefore cannot land
 uncounted — the author must either route it through the seam or classify it here
 with a reason.
 
-Classification (a call is allowed iff one holds):
-  * it lives in ``actuation.py`` — that module *is* the seam;
-  * its literal domain is a **communication** channel (notify / tts / …), which
-    does not mutate the home;
-  * it is a literal **read-only** or **meta** service (weather.get_forecasts,
-    automation.reload);
-  * it is a literal ``media_player`` **playback** service (TTS / announcements);
-  * its (file, function) is in ``_ALLOWED_SITES`` with a documented reason
-    (dynamic-domain notify, the execute_plan kernel-planner step, the seam's
-    verify-after-act retry, the generic user-authored routine runner).
+Classification is an exact inventory keyed by component-relative path,
+enclosing function, and literal domain/service. Dynamic arguments remain limited
+to their exact documented call site. Expected call counts catch extra or removed
+calls, including duplicates at an otherwise-approved site.
 
 Pure stdlib; no Home Assistant import. Run ``--check`` in CI; bare run lists every
 call and its classification.
@@ -35,54 +29,31 @@ import ast
 import pathlib
 import sys
 
-# ── communication / non-world-mutating domains (literal first arg) ───────────
-_COMM_DOMAINS = frozenset({
-    "notify", "persistent_notification", "tts", "assist_satellite",
-    "conversation", "logbook",
-})
+# Exact dispatch inventory, keyed by component-relative path, enclosing function,
+# and literal domain/service. A None value represents a dynamic argument, but
+# remains restricted to this exact site. Counts detect extra identical calls.
+_EXPECTED_CALLS = {
+    ("__init__.py", "async_setup_entry", "persistent_notification", "create"): (1, "startup recovery notification"),
+    ("__init__.py", "_jarvis_backup", "persistent_notification", "create"): (1, "explicit backup completion notification"),
+    ("__init__.py", "_jarvis_restore", "persistent_notification", "create"): (1, "explicit restore completion notification"),
+    ("actuation.py", "guarded_call", None, None): (1, "sole direct actuator dispatch seam"),
+    ("agent.py", "_exec_weather_forecast", "weather", "get_forecasts"): (2, "read-only forecast request and fallback"),
+    ("cognitive_core.py", "_notify_all_devices", "persistent_notification", "create"): (1, "confirmed-intrusion notification"),
+    ("continued_conversation.py", "_reopen_after_speaker", "assist_satellite", "start_conversation"): (1, "reopen selected voice satellite"),
+    ("observer.py", "_speak", "tts", "speak"): (1, "observer TTS output"),
+    ("output_dispatch.py", "_dispatch", "notify", None): (1, "validated notification service policy"),
+    ("proactive_audio.py", "_speak_tts", "tts", "speak"): (2, "proactive TTS and bounded fallback"),
+    ("proactive_audio.py", "_run_audit", None, None): (1, "fixed jarvis.speak audit announcement"),
+    ("tts_helper.py", "async_announce", "tts", "speak"): (2, "TTS batch output and bounded fallback"),
+    ("voice_confirm.py", "_confirm_native", "assist_satellite", "ask_question"): (1, "native confirmation prompt"),
+    ("voice_confirm.py", "_start_listening", "assist_satellite", "start_conversation"): (1, "bounded confirmation follow-up"),
+    ("voice_confirm.py", "ask_followup", "assist_satellite", "start_conversation"): (1, "bounded voice follow-up"),
+    ("voice_confirm.py", "announce_test", "assist_satellite", "announce"): (1, "explicit voice-output diagnostic"),
+}
 
-# literal (domain, service) that read or reload config rather than mutate devices
-_READONLY_META = frozenset({
-    ("weather", "get_forecasts"),
-    ("automation", "reload"),
-})
-
-# media_player services that are playback/announcement (TTS), not device control
-_MEDIA_PLAYBACK = frozenset({"play_media", "media_play", "media_stop"})
-
-# ── sites that are not literal-communication yet are legitimately not a bypass ─
-# Keyed (filename, enclosing-function) → reason. Each is either the seam's own
-# machinery or a dynamic-domain communication/macro path that cannot change a
-# device on its own. A NEW direct world-mutating call in a new location is NOT
-# here, so it fails the gate until seam-routed or classified.
-_ALLOWED_SITES: dict[tuple[str, str], str] = {
-    # execute_plan expresses each step as a kernel Plan and runs it via
-    # aexecute_plan; this closure is that plan's execution step (Phase B4) — the
-    # seam's planner contract, not a bypass.
-    ("agent.py", "_run"): "execute_plan kernel-planner execution step (B4)",
-    # verify-after-act: _verify_control re-issues the SAME canonical action once
-    # as part of the seam's verification step (control_device/H1).
-    ("agent.py", "_verify_control"): "seam verify-after-act retry (H1)",
-    # routines: a user-AUTHORED macro of arbitrary service/target/data steps,
-    # executed verbatim — not a JARVIS device decision. Generic dispatcher; the
-    # per-entity seam does not fit arbitrary service+target+data steps.
-    ("routines.py", "async_run_routine"): "generic user-authored macro runner",
-    # config-driven phone/notify pushes (domain/service from notify_service) —
-    # communications, resolve to notify.*.
-    ("sentinel.py", "_announce_rule"): "config-driven notify (communication)",
-    ("appliance_monitor.py", "_announce_done"): "config-driven notify (communication)",
-    ("proactive_briefing.py", "_push_to_phone"): "config-driven notify (communication)",
-    ("cognitive_core.py", "_push_notification"): "config-driven push notify (communication)",
-    ("observer.py", "_send_notification"): "config-driven notify (communication)",
-    ("__init__.py", "_test_notify"): "config-driven test notify (communication)",
-    # tts / announcement playback through dynamic service names (jarvis.speak).
-    ("proactive_audio.py", "_run_audit"): "jarvis.speak announcement (communication)",
-    # the TTS announcement pipeline sets the target speaker's volume before
-    # speaking — a playback-pipeline side effect, not a standalone device command.
-    ("proactive_audio.py", "_set_volume"): "announcement-pipeline TTS volume (communication)",
-    # ESPHome fallback that starts a voice satellite listening — a voice-pipeline
-    # trigger, not a home device state change.
-    ("voice_confirm.py", "_start_listening"): "voice-satellite start action (communication)",
+_EXPECTED_TOOL_CALLS = {
+    ("agent.py", "_execute_tool"): (1, "HA Assist fallback is read-only-gated"),
+    ("conversation.py", "_agentic_loop"): (1, "advertised and executed tools are read-only-gated"),
 }
 
 
@@ -105,15 +76,19 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_Call(self, node):
         func = node.func
-        # match X.services.async_call(...)
-        if (isinstance(func, ast.Attribute) and func.attr == "async_call"
-                and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "services"):
+        function = self.func_stack[-1] if self.func_stack else "<module>"
+        if isinstance(func, ast.Attribute) and func.attr == "async_call_tool":
+            self.calls.append({
+                "kind": "assist_api_tool", "line": node.lineno,
+                "func": function, "domain": None, "service": None,
+            })
+        elif (isinstance(func, ast.Attribute) and func.attr == "async_call"
+              and isinstance(func.value, ast.Attribute)
+              and func.value.attr == "services"):
             domain = self._literal(node.args[0]) if node.args else None
             service = self._literal(node.args[1]) if len(node.args) > 1 else None
             self.calls.append({
-                "line": node.lineno,
-                "func": self.func_stack[-1] if self.func_stack else "<module>",
+                "kind": "service", "line": node.lineno, "func": function,
                 "domain": domain, "service": service,
             })
         self.generic_visit(node)
@@ -124,31 +99,31 @@ class _Scanner(ast.NodeVisitor):
 
 
 def _classify(filename: str, call: dict) -> tuple[bool, str]:
-    if filename == "actuation.py":
-        return True, "seam (actuation.execute_actuator / execute_safety_actuator)"
+    if call.get("kind", "service") == "assist_api_tool":
+        expected = _EXPECTED_TOOL_CALLS.get((filename, call["func"]))
+        if expected:
+            return True, expected[1]
+        return False, f"unlisted HA Assist API tool dispatch in {filename}:{call['func']}()"
+    key = (filename, call["func"], call["domain"], call["service"])
+    expected = _EXPECTED_CALLS.get(key)
+    if expected:
+        return True, expected[1]
     dom, svc = call["domain"], call["service"]
-    if dom in _COMM_DOMAINS:
-        return True, f"communication domain '{dom}'"
-    if (dom, svc) in _READONLY_META:
-        return True, f"read-only/meta {dom}.{svc}"
-    if dom == "media_player" and svc in _MEDIA_PLAYBACK:
-        return True, f"media playback {dom}.{svc}"
-    key = (filename, call["func"])
-    if key in _ALLOWED_SITES:
-        return True, _ALLOWED_SITES[key]
-    where = f"{dom}.{svc}" if dom else "<dynamic domain>"
-    return False, f"unclassified world-mutating call {where} in {call['func']}()"
+    where = f"{dom}.{svc}" if dom or svc else "<dynamic domain/service>"
+    return False, f"unlisted direct service call {where} in {filename}:{call['func']}()"
 
 
 def scan() -> list[dict]:
     comp = _component_dir()
     rows: list[dict] = []
+    observed_services: dict[tuple, int] = {}
+    observed_tools: dict[tuple, int] = {}
     for path in sorted(comp.rglob("*.py")):
-        if "/kernel/" in str(path):          # pure types, no hass; never actuates
+        if "kernel" in path.relative_to(comp).parts[:-1]:
             continue
-        rel = path.name
+        rel = path.relative_to(comp).as_posix()
         try:
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except Exception as exc:   # pragma: no cover - defensive
             rows.append({"file": rel, "line": 0, "func": "<parse>",
                          "ok": False, "reason": f"parse error: {exc}"})
@@ -156,9 +131,36 @@ def scan() -> list[dict]:
         sc = _Scanner(rel)
         sc.visit(tree)
         for call in sc.calls:
+            if call["kind"] == "assist_api_tool":
+                key = (rel, call["func"])
+                observed_tools[key] = observed_tools.get(key, 0) + 1
+            else:
+                key = (rel, call["func"], call["domain"], call["service"])
+                observed_services[key] = observed_services.get(key, 0) + 1
             ok, reason = _classify(rel, call)
             rows.append({"file": rel, "line": call["line"], "func": call["func"],
-                         "ok": ok, "reason": reason})
+                         "kind": call["kind"], "ok": ok, "reason": reason})
+
+    for key, (expected_count, _reason) in _EXPECTED_CALLS.items():
+        actual_count = observed_services.get(key, 0)
+        if actual_count != expected_count:
+            filename, function, domain, service = key
+            rows.append({
+                "file": filename, "line": 0, "func": function, "ok": False,
+                "inventory_error": True,
+                "reason": (f"service inventory count drift for {domain}.{service}: "
+                           f"expected {expected_count}, found {actual_count}"),
+            })
+    for key, (expected_count, _reason) in _EXPECTED_TOOL_CALLS.items():
+        actual_count = observed_tools.get(key, 0)
+        if actual_count != expected_count:
+            filename, function = key
+            rows.append({
+                "file": filename, "line": 0, "func": function, "ok": False,
+                "inventory_error": True,
+                "reason": (f"HA Assist tool inventory count drift: expected "
+                           f"{expected_count}, found {actual_count}"),
+            })
     return rows
 
 
@@ -169,20 +171,26 @@ def main(argv: list[str]) -> int:
         for r in sorted(rows, key=lambda r: (r["file"], r["line"])):
             mark = "ok " if r["ok"] else "XX "
             print(f"  {mark}{r['file']}:{r['line']} {r['func']}() — {r['reason']}")
-        print(f"\n{len(rows)} service calls, {len(violations)} unclassified")
+        call_count = sum(row.get("kind") == "service" for row in rows)
+        tool_count = sum(row.get("kind") == "assist_api_tool" for row in rows)
+        print(f"\r\n{call_count} service calls, {tool_count} HA Assist tool calls, "
+              f"{len(violations)} inventory violations")
     if "--check" in argv:
         if violations:
-            print("ACTUATOR BYPASS — world-mutating service calls outside the "
-                  "seam and unclassified:", file=sys.stderr)
+            print("ACTUATOR BYPASS — direct calls are unlisted or the dispatch "
+                  "inventory has drifted:", file=sys.stderr)
             for r in violations:
                 print(f"  - {r['file']}:{r['line']} {r['func']}() — {r['reason']}",
                       file=sys.stderr)
-            print("\nRoute it through actuation.execute_actuator (or "
-                  "execute_safety_actuator for securing), or classify it in "
-                  "scripts/kernel_bypass_check.py with a reason.", file=sys.stderr)
+            print("\r\nRoute device actuation through the shared seam; update the "
+                  "exact inventory and docs for an intentional non-actuator call.",
+                  file=sys.stderr)
             return 1
-        print(f"bypass gate OK — all {len(rows)} service calls converge on the "
-              f"seam or are classified (Phase H exit criterion)")
+        service_count = sum(row.get("kind") == "service" for row in rows)
+        tool_count = sum(row.get("kind") == "assist_api_tool" for row in rows)
+        print(f"bypass gate OK — all {service_count} service calls and "
+              f"{tool_count} HA Assist tool calls are inventoried "
+              f"(Phase H exit criterion)")
     return 0
 
 

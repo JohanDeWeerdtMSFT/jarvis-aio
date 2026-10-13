@@ -200,21 +200,19 @@ async def test_confirm_native_failure_falls_back_to_gated(vc, monkeypatch):
     assert await vc.confirm(hass, "sure?", entity_id="lock.front") is True
 
 
-async def test_start_listening_uses_esphome_fallback(vc, monkeypatch):
+async def test_start_listening_fails_without_custom_fallback(vc, monkeypatch):
     hass = _Hass()
     calls = []
-    async def _fail_native_then_succeed(domain, service, data, **kwargs):
+    async def _fail_native(domain, service, data, **kwargs):
         calls.append((domain, service, data, kwargs))
-        if len(calls) == 1:
-            raise RuntimeError("native unavailable")
-    monkeypatch.setattr(vc, "_cfg", _cfg_map({
-        "satellite_start_action": {"sat.one": "esphome.basement_start_va"}}))
-    hass.services.async_call = _fail_native_then_succeed
-    assert await vc._start_listening(hass, "sat.one") is True
+        raise RuntimeError("native unavailable")
+    monkeypatch.setattr(
+        vc, "_cfg", lambda *args: pytest.fail("must not inspect custom fallback config"))
+    hass.services.async_call = _fail_native
+    assert await vc._start_listening(hass, "assist_satellite.example") is False
     assert calls == [
         ("assist_satellite", "start_conversation",
-         {"entity_id": "sat.one", "preannounce": False}, {"blocking": False}),
-        ("esphome", "basement_start_va", {}, {"blocking": False}),
+         {"entity_id": "assist_satellite.example", "preannounce": False}, {"blocking": True}),
     ]
 
 

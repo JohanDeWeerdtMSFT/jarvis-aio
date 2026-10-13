@@ -666,6 +666,25 @@ def outcome(request, status: str, hass, entity_id: str, detail: str = "") -> Non
         _record_outcome_shadow(request, status, observed, detail, hass)
 
 
+async def guarded_call(hass, domain: str, service: str, data: dict, *,
+                       blocking: bool = True) -> None:
+    """Dispatch one HA service call, but only if the authorization gate allows it.
+
+    Actuator-seam calls, agent plan steps and control retries use this boundary.
+    Other direct service callers and HA API tools are not covered by it.
+    Raises PermissionError when denied."""
+    from . import actuation_gate
+    ok, reason = actuation_gate.authorize(hass, domain, service, data)
+    if not ok:
+        _LOGGER.warning("actuation gate denied %s.%s: %s", domain, service, reason)
+        raise PermissionError(f"blocked by authorization gate: {reason}")
+    result = await hass.services.async_call(
+        domain, service, dict(data), blocking=blocking)
+    from .output_dispatch import service_succeeded
+    if not service_succeeded(result):
+        raise RuntimeError(f"{domain}.{service} returned failure: {result}")
+
+
 async def execute_actuator(hass, *, capability: str, entity_id: str,
                            domain: str, service: str, data: dict,
                            action: str = "", areq=None,
@@ -694,6 +713,13 @@ async def execute_actuator(hass, *, capability: str, entity_id: str,
     Returns ``(ok: bool, detail: str)``; a failed/blocked plan yields
     ``(False, detail)`` — the same error contract the inline path produced. Never
     raises for control flow."""
+    from . import actuation_gate
+    _allowed, _reason = actuation_gate.authorize(
+        hass, domain, service, data, entity_id)
+    if not _allowed:
+        _LOGGER.warning("actuation gate denied %s.%s on %s: %s",
+                        domain, service, entity_id, _reason)
+        return False, f"blocked by authorization gate: {_reason}"
     from .kernel import plan as _kplan
     kp = _kplan.Plan(
         goal=(f"{action} {entity_id}".strip() or capability),
@@ -704,8 +730,7 @@ async def execute_actuator(hass, *, capability: str, entity_id: str,
         correlation_id=(getattr(areq, "correlation_id", None) or correlation_id()))
 
     async def _run(_s):
-        await hass.services.async_call(domain, service, dict(data),
-                                       blocking=blocking)
+        await guarded_call(hass, domain, service, data, blocking=blocking)
         return True
 
     async def _chk(_c, _s):
@@ -791,12 +816,25 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
     """Perform a SAFETY/securing actuation through the universal seam, with the
     fail-toward-protection contract above. Returns True iff the securing action
     was performed (through the seam or the direct fallback). Never raises."""
+    if (domain, service) not in (("lock", "lock"), ("cover", "close_cover")):
+        _LOGGER.warning("safety wrapper denied non-securing service %s.%s on %s",
+                        domain, service, entity_id)
+        return False
     svc_data = dict(data or {"entity_id": entity_id})
 
     async def _direct() -> bool:
-        await hass.services.async_call(domain, service, dict(svc_data),
-                                       blocking=True)
+        await guarded_call(hass, domain, service, svc_data, blocking=True)
         return True
+
+    # The gate runs before both the seam and the fail-open fallback: fail-open
+    # applies only to calls that are already authorized (securing actions).
+    from . import actuation_gate
+    _allowed, _reason = actuation_gate.authorize(
+        hass, domain, service, svc_data, entity_id)
+    if not _allowed:
+        _LOGGER.warning("safety actuation denied %s.%s on %s: %s",
+                        domain, service, entity_id, _reason)
+        return False
 
     # Kill-switch → the exact direct call this path replaced.
     if not SAFETY_SEAM_ENFORCE:
@@ -824,10 +862,7 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
             "safety seam error on %s (%s): %s — failing open to a direct call",
             entity_id, capability, exc)
 
-    # Fail toward protection: secure directly so a safety response is never
-    # blocked by a seam fault. Idempotent, so this cannot un-secure anything.
-    # Reaching here means the seam already failed — a `failure` certification
-    # scenario; it closes iff this fail-open recovery secures the home.
+    # Only the securing pairs checked at entry can reach this backstop.
     try:
         _recovered = await _direct()
         _emit_failure_shadow(recovered=_recovered)

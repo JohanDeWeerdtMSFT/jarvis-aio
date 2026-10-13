@@ -369,15 +369,14 @@ async def _push_to_phone(
     config: dict,
     message: str,
     reason: str,
-) -> None:
+) -> dict:
     """Push briefing to phone via configured notify service."""
     notify_svc = config.get("notify_service", "")
     if not notify_svc:
-        _LOGGER.debug("Proactive: no notify_service configured, skipping push")
-        return
+        _LOGGER.warning("Proactive: no notify_service configured, skipping push")
+        return {"ok": False, "error": "No notification endpoint configured"}
 
     try:
-        svc_domain, svc_name = notify_svc.split(".", 1)
         title = {
             "arrival": "JARVIS — Welcome Home",
             "security": "JARVIS — Security Alert",
@@ -400,12 +399,14 @@ async def _push_to_phone(
         except Exception:
             pass
 
-        await hass.services.async_call(
-            svc_domain, svc_name, payload, blocking=False,
-        )
-        _LOGGER.info("Proactive: pushed to phone via %s", notify_svc)
+        from .output_dispatch import async_notify
+        result = await async_notify(hass, notify_svc, payload)
+        if result["ok"]:
+            _LOGGER.info("Proactive: pushed to phone via %s", notify_svc)
+        return result
     except Exception as exc:
         _LOGGER.warning("Proactive: phone push failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 # ── Start / Stop ────────────────────────────────────────────────────────────

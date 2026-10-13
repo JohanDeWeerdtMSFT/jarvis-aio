@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest pytest-asyncio pyflakes pyyaml voluptuous
+        run: python -m pip install -r requirements-test.txt
       - name: Audit (compile + imports + names)
         run: python scripts/audit.py
       - name: Kernel adoption (no drift)
@@ -70,8 +70,31 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/ -q
 
+  safety-gates:
+    name: Safety boundaries (py 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+      - name: Authorization, bootstrap, and retrieval boundary
+        run: >-
+          python -m pytest
+          tests/unit/test_actuation_gate.py
+          tests/unit/test_bootstrap.py
+          tests/unit/test_local_fastpath_gate.py
+          tests/unit/test_run_scene_kernel.py
+          tests/unit/test_grounded_isolation.py
+          tests/unit/test_retrieval_provenance.py
+          -q
+
   integration:
-    name: Integration (real HA lifecycle)
+    name: Integration (real HA lifecycle + dispatch)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -84,15 +107,71 @@ jobs:
         # PHACC provides the real `hass` fixture (and pulls in homeassistant +
         # pytest-asyncio). home-assistant-frontend supplies the `hass_frontend`
         # module that the frontend/panel_custom hard dependencies need during
-        # setup. The conversation backend (hassil/intents/gazetteer_matcher) is
-        # NOT needed: the smoke test mocks the platform forward.
+        # setup. Install conversation's exact requirements from the installed
+        # HA manifest for the public-API test; do not guess versions independently
+        # of PHACC's HA pin. Model/search adapters remain synthetic.
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest-homeassistant-custom-component home-assistant-frontend
-      - name: Integration smoke tests
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import homeassistant
+
+          manifest = Path(homeassistant.__file__).parent / "components" / "conversation" / "manifest.json"
+          requirements = json.loads(manifest.read_text())["requirements"]
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
+          PY
+      - name: Integration lifecycle and runtime safety tests
         # Invoked via `python -m pytest` so the repo root is on sys.path (the
         # conftest merges custom_components into PHACC's package __path__).
         run: python -m pytest tests/integration/ -q
+
+  hacs-runtime:
+    name: HACS 2.0.5 (offline install + update)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install pinned runtime-test dependencies
+        run: python -m pip install -r requirements-hacs-test.txt
+      - name: Prepare official HACS distribution outside checkout
+        # Distribution only; upstream tests/assets are not copied into this repo.
+        env:
+          HACS_TEST_COMPONENTS_PATH: ${{ runner.temp }}/hacs-runtime/custom_components
+        run: |
+          python - <<'PY'
+          import hashlib
+          import io
+          import os
+          from pathlib import Path
+          import urllib.request
+          import zipfile
+
+          url = "https://github.com/hacs/integration/releases/download/2.0.5/hacs.zip"
+          with urllib.request.urlopen(url, timeout=60) as response:
+              archive = response.read()
+          expected = "97be6b824a4f38e683728cc6dd72367f6b8bad0a43428b1b3b987a3087adf413"
+          assert hashlib.sha256(archive).hexdigest() == expected, "HACS distribution changed"
+          destination = Path(os.environ["HACS_TEST_COMPONENTS_PATH"]) / "hacs"
+          destination.mkdir(parents=True)
+          with zipfile.ZipFile(io.BytesIO(archive)) as package:
+              package.extractall(destination)
+          PY
+      - name: Real HACS command, local artifacts and installed-entry migration
+        env:
+          HACS_TEST_COMPONENTS_PATH: ${{ runner.temp }}/hacs-runtime/custom_components
+        run: >-
+          python -m pytest tests/hacs_runtime/ -q
+          --disable-socket --allow-unix-socket
 
   frontend:
     name: Frontend (syntax + smoke)
