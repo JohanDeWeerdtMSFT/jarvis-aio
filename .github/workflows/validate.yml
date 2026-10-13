@@ -90,6 +90,7 @@ jobs:
           tests/unit/test_local_fastpath_gate.py
           tests/unit/test_run_scene_kernel.py
           tests/unit/test_grounded_isolation.py
+          tests/unit/test_retrieval_provenance.py
           -q
 
   integration:
