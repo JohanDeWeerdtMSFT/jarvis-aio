@@ -69,7 +69,7 @@ class _GitHub:
         parts = url.path.strip("/").split("/")
         if url.host == "data-v2.hacs.xyz" and url.path in {
             "/integration/data.json", "/plugin/data.json", "/template/data.json",
-            "/removed/data.json", "/critical/data.json",
+            "/theme/data.json", "/removed/data.json", "/critical/data.json",
         }:
             return CallbackResult(payload=[] if parts[0] in {"removed", "critical"} else {})
         if url.host == "api.github.com" and url.path == "/rate_limit":
@@ -228,9 +228,6 @@ async def test_hacs_default_branch_install_update_and_consent(hass, monkeypatch)
             from custom_components.hacs.enums import HacsCategory, HacsStage
 
             hacs = hass.data["hacs"]
-            # Execute the scheduled production startup without opening an HTTP listener.
-            await hacs.startup_tasks()
-            await hass.async_block_till_done()
             assert not hacs.system.disabled
             assert hacs.stage == HacsStage.RUNNING
             await hacs.async_register_repository(REPOSITORY, HacsCategory.INTEGRATION)
