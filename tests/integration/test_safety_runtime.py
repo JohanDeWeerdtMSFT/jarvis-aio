@@ -193,9 +193,10 @@ async def test_real_alias_and_area_resolution_reach_final_gate(
     assert runtime.hass.states.get(heater).state == "off"
 
     area = area_registry.async_get(runtime.hass).async_create("Study")
-    entry = entity_registry.async_get(runtime.hass).async_get_or_create(
-        "light", "test", "study-lamp", suggested_object_id="study_lamp",
-        area_id=area.id)
+    entities = entity_registry.async_get(runtime.hass)
+    entry = entities.async_get_or_create(
+        "light", "test", "study-lamp", suggested_object_id="study_lamp")
+    entities.async_update_entity(entry.entity_id, area_id=area.id)
     runtime.register(entry.entity_id, "turn_on")
     allowed = await runtime.local.try_local(
         runtime.hass, "turn on all lights in the study")
