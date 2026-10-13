@@ -98,7 +98,7 @@ class _Scanner(ast.NodeVisitor):
 
 
 def _classify(filename: str, call: dict) -> tuple[bool, str]:
-    if filename == "actuation.py":
+    if filename == "actuation.py" and call["func"] == "guarded_call":
         return True, "seam (actuation.execute_actuator / execute_safety_actuator)"
     dom, svc = call["domain"], call["service"]
     if dom in _COMM_DOMAINS:
@@ -118,11 +118,11 @@ def scan() -> list[dict]:
     comp = _component_dir()
     rows: list[dict] = []
     for path in sorted(comp.rglob("*.py")):
-        if "/kernel/" in str(path):          # pure types, no hass; never actuates
+        if "kernel" in path.relative_to(comp).parts[:-1]:
             continue
         rel = path.name
         try:
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except Exception as exc:   # pragma: no cover - defensive
             rows.append({"file": rel, "line": 0, "func": "<parse>",
                          "ok": False, "reason": f"parse error: {exc}"})

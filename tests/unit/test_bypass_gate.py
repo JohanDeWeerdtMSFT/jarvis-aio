@@ -31,10 +31,14 @@ def test_tree_has_no_unclassified_bypasses():
         + "; ".join(f"{r['file']}:{r['line']} {r['func']}()" for r in violations))
 
 
-def test_seam_file_is_allowed():
-    ok, _ = gate._classify("actuation.py",
-                           {"domain": "light", "service": "turn_on", "func": "x"})
+def test_only_guarded_call_in_seam_file_is_allowed():
+    call = {"domain": "light", "service": "turn_on", "func": "guarded_call"}
+    ok, _ = gate._classify("actuation.py", call)
     assert ok is True
+
+    unguarded = {**call, "func": "direct_call"}
+    ok, reason = gate._classify("actuation.py", unguarded)
+    assert ok is False and "unclassified" in reason
 
 
 def test_communication_domains_allowed():

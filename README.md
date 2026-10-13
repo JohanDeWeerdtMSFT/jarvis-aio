@@ -181,7 +181,7 @@ Click the badge above, or open **HACS** in Home Assistant and search for **JARVI
 
 **4. Set up voice (optional).** On Home Assistant OS / Supervised, JARVIS can bootstrap the voice stack only if you enable `auto_bootstrap` in **Settings → Devices & Services → JARVIS → Configure → Voice**. This installs and starts the **Piper**, **Whisper**, and **openWakeWord** add-ons and downloads the JARVIS voice. `auto_pipeline` separately allows JARVIS to create or repair its Assist pipeline, including when you installed the voice engines yourself; either option defaults off and must be a boolean `true`. Pipeline creation keeps Piper's existing default voice when the JARVIS voice file is absent and leaves HA's preferred pipeline unchanged. Turn either option off in the same Configure screen to opt out; a later restart or upgrade will not re-enable it. On Container/Core installs (no Supervisor), install those pieces yourself and create the pipeline via Settings → Voice Assistants.
 
-**Draft safety foundation (not release-ready).** Calls routed through the actuator seam, agent plan execution and control retries pass deterministic authorization at dispatch, independent of prompts, wake words or voice confirmation. Only one concrete entity id is accepted. Lights, climate, media and similar services are allowed; lock, cover, alarm-panel, switch and input-boolean actions require an exact entity/service pair in `actuation_service_allowlist`, with no friendly-name or device-class inference. Sirens, valves and cameras require the exact entity id in `actuation_allowlist`. Script, scene and automation actions are not permitted through JARVIS. Grounded LLM loops keep Home Assistant Assist-API tools read-only regardless of `ha_api_tool_allowlist`; outside that scope, explicitly allowing a control-capable API tool remains a separate boundary that can bypass per-entity authorization.
+**Draft safety foundation (not release-ready).** Calls routed through the actuator seam, agent plan execution and control retries pass deterministic authorization at dispatch, independent of prompts, wake words or voice confirmation. Only one concrete entity id is accepted. Lights, climate, media and similar services are allowed; lock, cover, alarm-panel, switch and input-boolean actions require an exact entity/service pair in `actuation_service_allowlist`, with no friendly-name or device-class inference. Sirens, valves and cameras require the exact entity id in `actuation_allowlist`. Script, scene and automation actions are not permitted through JARVIS. HA Assist API tools are read-only in every scope; the legacy `ha_api_tool_allowlist` cannot enable controls that bypass per-entity authorization. See the [dispatch inventory](docs/dispatch-inventory.md).
 
 The exact-pair policy accepts only supported service pairs for `switch`, `input_boolean`, `lock`, `cover` and `alarm_control_panel`. For example, `{"switch.example_lamp": ["switch.turn_on"], "lock.example_door": ["lock.lock"]}` authorizes only those exact pairs. An entity-only `actuation_allowlist` entry does not authorize these domains. There is no implicit securing-action exception: lock, cover and alarm actions are denied unless individually authorized, including lock/close/arm actions. Any malformed pair policy disables the whole pair policy.
 
@@ -271,8 +271,9 @@ are unchanged; this is not a new voice-identity authorization mechanism.
 
 **What is intentionally disabled in grounded conversation:** `control_device`,
 `bulk_control`, `execute_plan`, `run_scene_or_script`, all mutating HA API tools
-(even `ha_api_tool_allowlist` entries), `delegate_task` and action-capable
-profiles, `remember`, `ignore_entity`, `unignore_entity`, `manage_autonomy`,
+(which are denied in every scope, regardless of `ha_api_tool_allowlist`),
+`delegate_task` and action-capable profiles, `remember`, `ignore_entity`,
+`unignore_entity`, `manage_autonomy`,
 `approve_suggestion`, `dismiss_suggestion`, goal/follow-up mutations,
 `dismiss_intrusion`, `acknowledge_alert`, `set_mode` and `ingest_documents`.
 Complex LLM-only control plans, protected controls that defer from the local

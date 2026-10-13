@@ -32,12 +32,10 @@ from typing import Any, Optional
 _LOGGER = logging.getLogger(__name__)
 
 ALLOWLIST_KEY = "actuation_allowlist"
-HA_TOOL_ALLOWLIST_KEY = "ha_api_tool_allowlist"
 SERVICE_ALLOWLIST_KEY = "actuation_service_allowlist"
 NOTIFICATION_ALLOWLIST_KEY = "notification_service_allowlist"
 
 _ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\Z")
-_TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}\Z")
 _NOTIFY_RE = re.compile(r"notify\.[a-z0-9_]+\Z")
 
 # Allowed without any configuration: ordinary, non-access device services.
@@ -147,16 +145,12 @@ def _service_permitted(target: str, domain: str, service: str) -> bool:
 
 
 def ha_tool_permitted(tool_name: str) -> bool:
-    """HA Assist API tools are not routed through the actuator seam, so they are
-    denied unless read-only or explicitly named in ``ha_api_tool_allowlist``."""
-    if not isinstance(tool_name, str):
-        return False
-    if tool_name in HA_READ_ONLY_TOOLS:
-        return True
-    from .grounded_boundary import is_grounded
-    if is_grounded():
-        return False
-    return tool_name in _validated_list(HA_TOOL_ALLOWLIST_KEY, _TOOL_RE)
+    """Permit only HA Assist API tools that cannot dispatch a service.
+
+    The built-in control tools can resolve names and expand targets internally,
+    bypassing JARVIS's exact entity/service authorization at dispatch.
+    """
+    return isinstance(tool_name, str) and tool_name in HA_READ_ONLY_TOOLS
 
 
 def authorize(hass, domain: Any, service: Any, data: Any,

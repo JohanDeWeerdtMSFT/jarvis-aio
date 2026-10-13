@@ -3023,8 +3023,7 @@ async def _execute_tool(
             return json.dumps({"error": str(exc)})
 
     # Fallback to HA's built-in LLM API tools. These bypass the actuator seam,
-    # so only read-only ones (or ones the user named in ha_api_tool_allowlist)
-    # are permitted.
+    # so only read-only tools are permitted.
     from . import actuation_gate
     if hass_api and not actuation_gate.ha_tool_permitted(tool_name):
         return json.dumps({"error": f"{tool_name} is not permitted"})

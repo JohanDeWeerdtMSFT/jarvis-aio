@@ -552,21 +552,58 @@ async def test_safety_wrapper_rejects_non_securing_before_any_path(
     assert hass.service_calls == []
 
 
+async def test_local_alias_and_area_resolution_reach_the_final_gate(
+        load, act, monkeypatch):
+    local = load("local_engine")
+    local._CTX = local._ConvCtx()
+    hass = FakeHass()
+    monkeypatch.setattr(
+        local, "_load_learned_aliases",
+        lambda _hass: {"heater": "switch.heater"})
+    hass.states.set("switch.heater", "off", friendly_name="Harmless lamp")
+    denied = await local.try_local(hass, "turn on the heater")
+    assert denied is not None and not denied.success
+    assert hass.service_calls == []
+
+    local._CTX = local._ConvCtx()
+    hass.states.set("light.study_lamp", "off", friendly_name="Study Lamp")
+    helpers = sys.modules["homeassistant.helpers"]
+    area = types.SimpleNamespace(id="study", name="Study")
+    entry = types.SimpleNamespace(
+        domain="light", entity_id="light.study_lamp", area_id=None,
+        device_id="study-device")
+    monkeypatch.setattr(
+        helpers.area_registry, "async_get",
+        lambda _hass: types.SimpleNamespace(async_list_areas=lambda: [area]))
+    monkeypatch.setattr(
+        helpers.entity_registry, "async_get",
+        lambda _hass: types.SimpleNamespace(entities={entry.entity_id: entry}))
+    monkeypatch.setattr(
+        helpers.device_registry, "async_get",
+        lambda _hass: types.SimpleNamespace(
+            async_get=lambda _device_id: types.SimpleNamespace(area_id="study")))
+    entity_filter = load("entity_filter")
+    monkeypatch.setattr(entity_filter, "is_excluded", lambda _hass, _entity: False)
+
+    allowed = await local.try_local(hass, "turn on all lights in the study")
+    assert allowed is not None and allowed.success
+    assert hass.service_calls == [
+        ("light", "turn_on", {"entity_id": "light.study_lamp"})]
+
+
 # ── HA Assist API tool fallback ──────────────────────────────────────────────
 
-def test_ha_api_tools_denied_unless_read_only_or_allowlisted(gate, cfg):
+def test_ha_api_tools_are_read_only_even_if_allowlisted(gate, cfg):
+    cfg["ha_api_tool_allowlist"] = ["HassLightSet", "HassTurnOn"]
     assert gate.ha_tool_permitted("HassGetState")
+    assert gate.ha_tool_permitted("HassGetWeather")
     assert not gate.ha_tool_permitted("HassTurnOn")
     assert not gate.ha_tool_permitted("HassLightSet")
     assert not gate.ha_tool_permitted(None)
-    cfg["ha_api_tool_allowlist"] = ["HassLightSet"]
-    assert gate.ha_tool_permitted("HassLightSet")
-    assert not gate.ha_tool_permitted("HassTurnOn")
-    cfg["ha_api_tool_allowlist"] = "HassTurnOn"
-    assert not gate.ha_tool_permitted("HassTurnOn")
 
 
 async def test_execute_tool_ha_fallback_blocked(load, cfg):
+    cfg["ha_api_tool_allowlist"] = ["HassTurnOn"]
     agent = load("agent")
 
     class Api:
