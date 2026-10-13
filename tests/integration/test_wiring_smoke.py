@@ -23,6 +23,8 @@ teardown check (which fails on any lingering timer after unload).
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.const import EVENT_CALL_SERVICE
+from homeassistant.core import callback
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 DOMAIN = "jarvis"
@@ -124,6 +126,46 @@ async def test_reload_leaves_integration_loaded(hass):
         await hass.async_block_till_done()
         assert entry.entry_id in hass.data[DOMAIN]
         assert hass.services.has_service(DOMAIN, "analyze_camera")
+
+
+async def test_schema_upgrade_does_not_grant_bootstrap_or_pipeline_consent(hass):
+    """The supported schema upgrade runs in async_setup_entry, not async_migrate_entry."""
+    from custom_components.jarvis.migrations import CURRENT_SCHEMA_VERSION
+
+    entry = _entry()  # schema 7, no explicit bootstrap/pipeline consent
+    assert entry.data["schema_version"] == 7
+    assert "auto_bootstrap" not in entry.options
+    assert "auto_pipeline" not in entry.options
+    entry.add_to_hass(hass)
+    calls = []
+
+    @callback
+    def record(event):
+        calls.append(dict(event.data))
+
+    unsubscribe = hass.bus.async_listen(EVENT_CALL_SERVICE, record)
+    try:
+        with _mock_provider():
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            assert entry.data["schema_version"] == CURRENT_SCHEMA_VERSION
+            assert entry.options["auto_bootstrap"] is False
+            assert entry.options["auto_pipeline"] is False
+            upgraded_data = dict(entry.data)
+            upgraded_options = dict(entry.options)
+            assert calls == []
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+            assert dict(entry.data) == upgraded_data
+            assert dict(entry.options) == upgraded_options
+            assert calls == []
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            await hass.async_block_till_done()
+            assert entry.entry_id not in hass.data.get(DOMAIN, {})
+            assert not hass.services.has_service(DOMAIN, "analyze_camera")
+            assert calls == []
+    finally:
+        unsubscribe()
 
 
 async def test_setup_fails_safely_on_provider_outage(hass):

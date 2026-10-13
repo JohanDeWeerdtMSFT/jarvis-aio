@@ -54,9 +54,9 @@ class _SearchResponse:
 
 
 @pytest.fixture
-def runtime(hass, monkeypatch, tmp_path):
+async def runtime(hass, monkeypatch, tmp_path):
     from custom_components.jarvis import (
-        actuation, agent, database, jarvis_config, llm_provider, local_engine,
+        actuation, agent, database, jarvis_config, llm_provider, local_engine, websocket,
     )
 
     monkeypatch.setattr(jarvis_config, "CONFIG_PATH", tmp_path / "config.json")
@@ -64,6 +64,7 @@ def runtime(hass, monkeypatch, tmp_path):
     monkeypatch.setattr(jarvis_config, "_loaded", False)
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "conversation.db")
     monkeypatch.setattr(agent, "_LEARN_FILE", str(tmp_path / "learned.json"))
+    monkeypatch.setattr(websocket, "_LOG_FILE", tmp_path / "jarvis.log")
     monkeypatch.setattr(local_engine, "_CTX", local_engine._ConvCtx())
     events = []
     calls = []
@@ -101,6 +102,10 @@ def runtime(hass, monkeypatch, tmp_path):
         hass=hass, actuation=actuation, agent=agent, database=database,
         config=jarvis_config, providers=llm_provider, local=local_engine,
         events=events, calls=calls, register=register, run=run)
+    # These direct runtime paths own the lazy logger without a config entry to unload.
+    writer = websocket._WRITER_THREAD
+    await hass.async_add_executor_job(websocket.stop_log_writer)
+    assert writer is None or not writer.is_alive()
     unsubscribe()
     for domain, service, entity_id in registered:
         hass.services.async_remove(domain, service)
