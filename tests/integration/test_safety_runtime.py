@@ -3,7 +3,8 @@
 Only model/HTTP adapters and temporary store locations are replaced. Dispatch,
 authorization, local resolution, grounded reasoning and history persistence are
 real. Registered services only update synthetic states; no hardware is loaded.
-These tests do not exercise the HA conversation platform or a HACS upgrade.
+The public-API test also loads the real conversation platform. None of these
+tests exercise a HACS artifact install/upgrade or physical voice hardware.
 """
 import copy
 import json
@@ -26,6 +27,8 @@ def _reply(text="", tool=None, **args):
 
 
 class _Provider:
+    name = "test"
+
     def __init__(self, replies):
         self.replies = list(replies)
         self.requests = []
@@ -37,6 +40,9 @@ class _Provider:
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+    def supports_vision(self):
+        return False
 
 
 class _SearchResponse:
@@ -264,3 +270,92 @@ async def test_service_outage_is_an_error_not_success_or_retry(runtime):
     assert runtime.events == runtime.calls == [
         ("light", "turn_on", {"entity_id": LAMP})]
     assert runtime.hass.states.get(LAMP).state == "off"
+
+
+async def test_public_conversation_api_refuses_injection_after_reload(runtime, monkeypatch, tmp_path):
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+    from homeassistant.helpers import aiohttp_client, entity_registry
+    from homeassistant.setup import async_setup_component
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from custom_components import jarvis
+    from custom_components.jarvis import grounded_boundary
+    from custom_components.jarvis.migrations import CURRENT_SCHEMA_VERSION
+
+    monkeypatch.setattr(runtime.hass.config, "config_dir", str(tmp_path))
+    runtime.register(LAMP, "turn_on")
+    provider = _Provider([
+        _reply(tool="web_research", query="test answer"),
+        _reply("The answer is 42. " + INJECTION),
+        _reply(tool="control_device", entity_id=LAMP, action="turn_on"),
+        _reply("Done"),
+    ])
+    monkeypatch.setattr(jarvis, "create_provider", lambda *args, **kwargs: provider)
+    monkeypatch.setattr(runtime.providers, "create_provider", lambda *args, **kwargs: provider)
+
+    def no_fallback(*args, **kwargs):
+        raise AssertionError("the scripted primary provider should not need a fallback")
+
+    monkeypatch.setattr(runtime.providers, "create_tier_provider", no_fallback)
+    session = SimpleNamespace(get=lambda *args, **kwargs: _SearchResponse())
+    assert await async_setup_component(runtime.hass, "conversation", {})
+    entry = MockConfigEntry(
+        domain="jarvis", unique_id="test",
+        data={"api_key": "", "model": "test", "llm_provider": "ollama",
+              "llm_base_url": "http://localhost:11434/v1",
+              "schema_version": CURRENT_SCHEMA_VERSION},
+    )
+    entry.add_to_hass(runtime.hass)
+    assert await runtime.hass.config_entries.async_setup(entry.entry_id)
+    try:
+        await runtime.hass.async_block_till_done()
+        agents = [
+            entity for entity in entity_registry.async_entries_for_config_entry(
+                entity_registry.async_get(runtime.hass), entry.entry_id)
+            if entity.domain == "conversation"
+        ]
+        assert len(agents) == 1
+        agent_id = agents[0].entity_id
+        assert conversation.async_get_agent_info(runtime.hass, agent_id) is not None
+        assert runtime.events == runtime.calls == []
+        monkeypatch.setattr(aiohttp_client, "async_get_clientsession", lambda hass: session)
+        first = await conversation.async_converse(
+            runtime.hass, text="Search the web for the test answer.",
+            conversation_id=None, context=Context(), language="en", agent_id=agent_id)
+        assert INJECTION in first.response.as_dict()["speech"]["plain"]["speech"]
+        assert first.conversation_id and len(provider.requests) == 2
+        assert any(INJECTION in message.get("content", "")
+                   for message in provider.requests[-1][0] if message["role"] == "tool")
+        await runtime.hass.async_block_till_done()
+        assert runtime.events == runtime.calls == []
+
+        # Reload the actual platform so the next turn must seed persisted history.
+        assert await runtime.hass.config_entries.async_reload(entry.entry_id)
+        await runtime.hass.async_block_till_done()
+        assert conversation.async_get_agent_info(runtime.hass, agent_id) is not None
+        later = await conversation.async_converse(
+            runtime.hass, text="What does that source tell me to do?",
+            conversation_id=first.conversation_id, context=Context(),
+            language="en", agent_id=agent_id)
+        assert later.response.as_dict()["speech"]["plain"]["speech"] == grounded_boundary.DENIAL
+        assert len(provider.requests) == 4 and not provider.replies
+        assert any(INJECTION in message.get("content", "")
+                   for message in provider.requests[2][0])
+        await runtime.hass.async_block_till_done()
+        assert runtime.events == runtime.calls == []
+        assert runtime.hass.states.get(LAMP).state == "off"
+
+        local = await conversation.async_converse(
+            runtime.hass, text="Turn on the test lamp.",
+            conversation_id=later.conversation_id, context=Context(),
+            language="en", agent_id=agent_id)
+        assert local.response.as_dict()["speech"]["plain"]["speech"]
+        assert len(provider.requests) == 4
+        await runtime.hass.async_block_till_done()
+        assert runtime.events == runtime.calls == [
+            ("light", "turn_on", {"entity_id": LAMP})]
+        assert runtime.hass.states.get(LAMP).state == "on"
+    finally:
+        assert await runtime.hass.config_entries.async_unload(entry.entry_id)
+        await runtime.hass.async_block_till_done()
+    assert conversation.async_get_agent_info(runtime.hass, agent_id) is None

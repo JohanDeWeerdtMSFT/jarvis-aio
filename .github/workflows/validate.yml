@@ -107,13 +107,23 @@ jobs:
         # PHACC provides the real `hass` fixture (and pulls in homeassistant +
         # pytest-asyncio). home-assistant-frontend supplies the `hass_frontend`
         # module that the frontend/panel_custom hard dependencies need during
-        # setup. The conversation backend (hassil/intents/gazetteer_matcher) is
-        # NOT needed: lifecycle tests mock the platform forward; runtime safety
-        # tests drive the real local/agent/actuator paths and HA service registry
-        # without loading that platform. Model/search adapters are synthetic.
+        # setup. Install conversation's exact requirements from the installed
+        # HA manifest for the public-API test; do not guess versions independently
+        # of PHACC's HA pin. Model/search adapters remain synthetic.
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest-homeassistant-custom-component home-assistant-frontend
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import homeassistant
+
+          manifest = Path(homeassistant.__file__).parent / "components" / "conversation" / "manifest.json"
+          requirements = json.loads(manifest.read_text())["requirements"]
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
+          PY
       - name: Integration lifecycle and runtime safety tests
         # Invoked via `python -m pytest` so the repo root is on sys.path (the
         # conftest merges custom_components into PHACC's package __path__).
