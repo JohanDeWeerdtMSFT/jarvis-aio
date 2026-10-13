@@ -289,5 +289,5 @@ async def test_hacs_default_branch_install_update_and_consent(hass, monkeypatch)
             await hass.async_block_till_done()
             unsubscribe()
             assert github.unexpected == []
-            assert all(method == "GET" for method, url in http.requests)
+            assert {method.upper() for method, url in http.requests} == {"GET"}
     assert calls == []
