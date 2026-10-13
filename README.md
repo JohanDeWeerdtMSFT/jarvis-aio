@@ -103,6 +103,11 @@ Open HACS, search for **JARVIS AI Assistant**, install it, and restart Home Assi
 Everything JARVIS can do today, by domain. In conversation these surface as
 tools the agent invokes on its own; most also have a panel control.
 
+**Safety-candidate restriction:** grounded LLM conversation is read-only. The
+mutating conversation tools listed below are unavailable in this candidate;
+fresh explicit commands handled by the deterministic local engine still work.
+See [Grounded conversation trust boundary](#grounded-conversation-trust-boundary).
+
 **Conversation & delegation**
 - Natural voice/text conversation through the Home Assistant pipeline, in the MCU-JARVIS persona with a tunable banter level.
 - **Ephemeral sub-agents** (`delegate_task`) — for a complex, self-contained slice of a request, JARVIS spins up a focused in-process sub-agent with a minimal objective, a curated read-only tool subset, and a small turn budget, then folds the result back. Sub-agents can't actuate or recurse; depth is capped. On a single-GPU host they run serially, so the win is a tight focused context, not parallelism.
@@ -180,13 +185,13 @@ The legacy add-on bootstrap script uses the equivalent environment flags `JARVIS
 
 If an enabled step fails, check the JARVIS and Supervisor logs; pipeline setup also reports the manual Voice Assistants path. An incomplete add-on bootstrap can retry on a later start while `auto_bootstrap` remains enabled, and pipeline repair is attempted on each start while `auto_pipeline` remains enabled. Turning either option off stops future automation but does not uninstall add-ons, remove downloaded voice files, or delete a pipeline. Undo those resources manually or restore a Home Assistant backup if rollback is needed.
 
-**Draft safety foundation (not release-ready).** Calls routed through the actuator seam, agent plan execution and control retries pass a deterministic authorization check at dispatch, independent of prompts, wake words or voice confirmation. Only single, concrete entity ids are accepted there. Lights, climate, media and similar are allowed; lock, close-cover and alarm-arm services are allowed; unlocking/opening locks and garage/door covers, disarming alarms, sirens, valves, cameras and script/scene/automation activation are **denied unless the exact entity id is listed** in `actuation_allowlist` (a list of exact ids; any malformed value disables the whole list). Home Assistant Assist-API tools are filtered to read-only ones unless named in `ha_api_tool_allowlist`; allowing a control-capable API tool bypasses per-entity authorization and is not recommended.
+**Draft safety foundation (not release-ready).** Calls routed through the actuator seam, agent plan execution and control retries pass a deterministic authorization check at dispatch, independent of prompts, wake words or voice confirmation. Only single, concrete entity ids are accepted there. Lights, climate, media and similar are allowed; lock, close-cover and alarm-arm services are allowed; unlocking/opening locks and garage/door covers, disarming alarms, sirens, valves, cameras and script/scene/automation activation are **denied unless the exact entity id is listed** in `actuation_allowlist` (a list of exact ids; any malformed value disables the whole list). Grounded LLM loops keep Home Assistant Assist-API tools read-only regardless of `ha_api_tool_allowlist`; outside that grounded scope, enabling a control-capable API tool remains a separate boundary that can bypass per-entity authorization.
 
 All `switch` and `input_boolean` actions are denied by default, regardless of identifier, friendly name or device class. They require exact entity/service pairs in `actuation_service_allowlist`, for example `{"switch.example_lamp": ["switch.turn_on", "switch.turn_off"]}`. Only `turn_on`, `turn_off` and `toggle` are supported; each must be explicitly enumerated with its domain prefix. An entity-only `actuation_allowlist` entry does not authorize these domains. Any malformed pair policy disables the whole pair policy.
 
 Routine execution is disabled by default: `routine_execution_enabled` must be the JSON boolean `true` in JARVIS config to opt in. While disabled, neither custom nor built-in routines load steps, announce or dispatch services. When enabled, routines preflight every service step before any dispatch or announcement, reject target expansion (including `all`, lists, areas and device classes), and execute accepted steps through the actuator seam with a dispatch-time recheck. Default routines contain broad targets and therefore still make zero service calls until replaced with concrete authorized steps. An optional step cannot bypass denial; a runtime failure stops subsequent steps and returns explicit errors. The `jarvis.routine` HA service wrapper raises a Home Assistant service error for any unsuccessful result instead of dropping it, so service callers do not receive success-shaped completion for disabled, denied or failed routines. Already executed steps cannot be rolled back. These changes do **not** complete #4: Assist control-tool allowlisting, previously installed automations, cover classification, securing fallback and fixed audio target authorization remain unresolved boundaries; do not treat this draft as authorization-complete.
 
-After a recognized web/mail/document/calendar/camera or delegation tool returns, subsequent control calls are refused within that reasoning loop. This is not cross-turn provenance protection: history, initial context and other retrieval surfaces are not comprehensively classified, and the alternate conversation loop only filters advertised API tools, not returned calls at dispatch. Fixed audio/maintenance subsystems still call services directly and need separate target/side-effect review. Switches or helpers can trigger security-sensitive automations, and closing/arming actions are not universally harmless. Keep this candidate in an isolated test environment until these boundaries and end-to-end retrieval/alias/area tests are addressed.
+Issue #11 adds a separate grounded-conversation boundary: both LLM reasoning loops are read-only from entry, recheck returned calls at dispatch, and cannot gain action authority from retrieved text, history or summaries. The deterministic actuator gate also vetoes actions while that scope is active. This does not authorize every non-agent service caller: fixed audio/maintenance subsystems and other raw service paths still need separate target/side-effect review. Switches or helpers can trigger security-sensitive automations, and closing/arming actions are not universally harmless. Keep this candidate in an isolated test environment until those broader boundaries and end-to-end retrieval/alias/area tests are addressed.
 
 **Configurable output migration (draft #4).** Selecting `notify_service` or discovering a `mobile_app_*` name does not authorize notification dispatch; the exact `notification_service_allowlist` defaults to empty. An owner must review the actual endpoint implementation and downstream effects, then enumerate exact notification endpoints in JARVIS's `config.json` (normally `/config/jarvis/config.json`); the panel selector does not write this authorization policy. Names, prompts and LLM input are not evidence that an endpoint only displays a notification. Custom ESPHome microphone-start fallback is disabled; legacy `satellite_start_action` settings are ignored. Voice follow-up uses the fixed native Assist satellite path and reports an error if it cannot start.
 
@@ -220,6 +225,63 @@ Learning, suggestion generation, pure draft normalization, YAML review and sugge
 **Migration and validation:** old approve-and-install workflows stop; there is no automatic installation migration or opt-in. Stored suggestions/draft definitions are retained and can be reviewed without changing HA automation configuration. Tests cover unchanged valid/corrupt existing YAML bytes and absent files, zero path/executor/reload calls, HA service errors, actual suggestion/WebSocket denial and honest panel toasts. Run `python -m pytest tests/unit/test_automation_creator.py tests/unit/test_suggestion_install.py tests/unit/test_websocket_provider_config.py tests/unit/test_suggestion_evidence.py -q`, plus `node --check custom_components/jarvis/frontend/jarvis-panel.js` and the documented panel smoke test. No live HA changes were made.
 
 **Existing automations and rollback:** previously installed HA automations continue independently of this creation boundary. Owners must review/disable them separately; this patch neither edits them nor revokes their future native HA actions. Reverting restores arbitrary persistent automation creation and reload, including the former destructive read-error fallback. Review and disable consequential legacy automations before rollback; neither reverting nor blocking new installations undoes previously installed automations or physical effects. Future bounded installation/runtime authorization requires a separate approved design, not a raw-YAML enable switch.
+### Grounded conversation trust boundary
+
+This candidate uses **grounded/action isolation**, not a text classifier or a
+model-written provenance flag. Every `run_agent` invocation and the legacy HA
+conversation tool loop is read-only from entry, before any provider call.
+Search/mail/document/calendar/camera text, entity friendly names, learned
+aliases/preferences, tool descriptions, recalled memory, conversation history,
+provider answers, replayed tool results and summaries never confer control
+authority. Persisted transcripts remain useful for grounded follow-ups; no
+database migration or special trust field is needed because no transcript,
+including pre-upgrade rows or a summary stored as a system message, is consumed
+by an action-capable LLM loop.
+
+Only a fixed read-only tool set is advertised, including after request-size,
+tool-format and provider-fallback retries. Returned calls are checked again at
+dispatch; omitted, invented and newly added mutating tools are refused.
+`grounded_boundary.py` carries the boundary in application-owned task-local
+state. The existing deterministic actuator gate also vetoes service dispatch
+inside that scope, even for allowlisted entities or tools. Child asyncio tasks
+inherit the restriction after the originating answer finishes. Denied actions
+are logged and produce an explicit refusal to the user, overriding any
+provider-generated claim that an action succeeded.
+
+**What still works:** normal searches and contextual grounded answers, live
+read-only HA queries, and a fresh explicit device command supported by
+`local_engine.try_local`, such as "turn on the kitchen light". The local engine
+receives only the current input from HA, never a retrieved answer, summary or
+transcript; its resolved service still passes all foundation authorization
+checks. A prior grounded denial does not poison a subsequent local command.
+Friendly names remain data for deterministic entity matching, not executable
+instructions. HA's current-input authentication and local matching semantics
+are unchanged; this is not a new voice-identity authorization mechanism.
+
+**What is intentionally disabled in grounded conversation:** `control_device`,
+`bulk_control`, `execute_plan`, `run_scene_or_script`, all mutating HA API tools
+(even `ha_api_tool_allowlist` entries), `delegate_task` and action-capable
+profiles, `remember`, `ignore_entity`, `unignore_entity`, `manage_autonomy`,
+`approve_suggestion`, `dismiss_suggestion`, goal/follow-up mutations,
+`dismiss_intrusion`, `acknowledge_alert`, `set_mode` and `ingest_documents`.
+Complex LLM-only control plans, protected controls that defer from the local
+engine, and contextual "do that"/"follow the source's instructions" requests
+cannot act. Use the explicit local-command path where supported, or HA's own
+controls. There is no configuration flag that promotes grounded reasoning back
+to control authority.
+
+**Limitations and rollback:** this is issue #1's conversation boundary, not
+complete authorization for every subsystem. Routines, background cognitive
+actions, configurable notification/audio services and raw service callers
+outside the scoped actuator seam retain the foundation's documented gaps.
+Switches/helpers may trigger sensitive automations; closing/arming is not
+universally harmless. Trusted integration/tool code must not bypass the seam
+or move dispatch into an executor without propagating context. Keep this draft
+isolated; no live deployment is certified. To roll back, revert the issue #1
+feature commit and restart HA, keeping the foundation's allowlists and opt-in
+bootstrap defaults. No history deletion or data migration is required.
+Rolling back restores the known cross-turn injection gap, so do not re-enable
+grounded LLM actions on an untrusted-history installation.
 
 **5. Fine-tune (optional).** Advanced routing, observer mode, camera watching, and AI-model-per-role assignments are configured from the JARVIS panel → **Settings**. The **LLM** submenu manages provider keys. **Core** selects the Conversation provider and model. **Observer** lets you choose a provider and live model for each tier: Classifier (Tier 1 — cheap), Reasoning (Tier 2 — main), and Review (Tier 3 — periodic).
 

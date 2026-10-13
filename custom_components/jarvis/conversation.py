@@ -43,6 +43,7 @@ from .database import save_message
 from .llm_provider import create_provider
 from .presence import presence_context_string
 from .tts_helper import resolve_tts_entity, async_announce
+from .grounded_boundary import deny_action, read_only_reasoning
 
 
 # ── Multi-wake dedup ────────────────────────────────────────────────────────
@@ -637,6 +638,7 @@ class JarvisAgent(conversation.ConversationEntity):
 
     # ── Agentic loop ──────────────────────────────────────────────────────────
 
+    @read_only_reasoning
     async def _agentic_loop(
         self,
         messages: list[dict],
@@ -690,6 +692,16 @@ class JarvisAgent(conversation.ConversationEntity):
             })
 
             for call in result["calls"]:
+                # Recheck at dispatch: descriptions/history can cause a model
+                # to invent calls that were never advertised.
+                if not ha_tool_permitted(call["name"]):
+                    _LOGGER.warning("JARVIS grounded tool '%s' refused", call["name"])
+                    working.append({
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": json.dumps({"error": deny_action()}),
+                    })
+                    continue
                 try:
                     tool_input = llm.ToolInput(**_ha_kwargs(
                         llm.ToolInput,
