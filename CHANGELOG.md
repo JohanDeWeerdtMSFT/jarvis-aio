@@ -4,6 +4,7 @@
 - New `actuation_gate.py`: deterministic default-deny authorization at the service-dispatch boundary (`actuation.guarded_call`, `execute_actuator`, `execute_safety_actuator`, `execute_plan`). Sensitive services and script/scene/automation need an exact entry in `actuation_allowlist`; HA Assist-API tools are read-only unless in `ha_api_tool_allowlist`.
 - After web/mail/document/calendar/camera output enters a reasoning loop, control tools are removed and refused for the rest of that loop.
 - Behaviour change: unlock/open, scripts, scenes and automations no longer run without an allowlist entry. Securing actions still fail open to a direct call, but only if the gate authorizes them.
+- Retrieval provenance is cross-turn: grounded reasoning is read-only for every loop (history, summaries, retries); added end-to-end tests for friendly-name/tool-output injection, replay, summaries and slim retry; summaries are labelled as untrusted data.
 - Merge blockers: direct service callers and allowlisted HA control tools bypass per-entity checks; retrieval provenance is loop-local, not cross-turn; the alternate conversation loop lacks dispatch enforcement; end-to-end retrieval/alias/area tests and a reproducible green CI baseline remain necessary.
 
 ## [9.18.1] — Ollama setup hardening (edge cases from the #383 review)

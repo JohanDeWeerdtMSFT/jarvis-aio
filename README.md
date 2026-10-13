@@ -275,6 +275,14 @@ cannot act. Use the explicit local-command path where supported, or HA's own
 controls. There is no configuration flag that promotes grounded reasoning back
 to control authority.
 
+**Cross-turn provenance (issue #1).** Provenance is structural rather than per-message: there is no taint bit to lose, reset, or have a retry, summary or provider fallback clear. A model-authored summary is re-injected labelled as retained, possibly untrusted data, but its label has no security effect: authority is never read from text. Authorization remains solely in `actuation_gate.authorize` (PR #10 exact-pair policy) plus the grounded veto (PR #11).
+
+*Limitations:* (1) LLM-driven control is unavailable by design; only the deterministic `local_engine` path actuates, on the current input alone. (2) A refused action replaces the whole reply with the refusal, even when the model also wrote a benign answer. (3) Read-only tools still return untrusted text to the model, so a poisoned answer can mislead or leak what read-only tools can read; it cannot actuate. (4) Any new LLM loop that advertises tools must use `@read_only_reasoning`; new tools default to control-capable and are refused.
+
+*Validation:* `python -m pytest tests/unit/test_grounded_isolation.py tests/unit/test_retrieval_provenance.py tests/unit/test_actuation_gate.py -q` (synthetic data and fake providers only; no live HA or provider calls), plus `python scripts/audit.py` and the CI safety-gates job.
+
+*Rollback:* reverting PR #13 restores the previous summary label and removes its added regression tests, their safety-gate CI invocation, and the explanatory README/CHANGELOG text. These are summary-label, documentation, test, and CI-only changes; no schema, configuration, grounded-scope veto, or deterministic authorization policy is changed.
+
 **Limitations and rollback:** this is issue #1's conversation boundary, not
 complete authorization for every subsystem. Routines, background cognitive
 actions, configurable notification/audio services and raw service callers
