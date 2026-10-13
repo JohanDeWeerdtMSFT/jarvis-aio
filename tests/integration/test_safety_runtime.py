@@ -298,6 +298,7 @@ async def test_public_conversation_api_refuses_injection_after_reload(runtime, m
 
     monkeypatch.setattr(runtime.providers, "create_tier_provider", no_fallback)
     session = SimpleNamespace(get=lambda *args, **kwargs: _SearchResponse())
+    assert await async_setup_component(runtime.hass, "homeassistant", {})
     assert await async_setup_component(runtime.hass, "conversation", {})
     entry = MockConfigEntry(
         domain="jarvis", unique_id="test",
