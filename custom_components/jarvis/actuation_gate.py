@@ -13,7 +13,9 @@ decision depends on prompts, wake words, voice confirmation or the LLM:
   scene, automation) or drive other security-sensitive classes are denied unless
   the exact entity id appears in ``actuation_allowlist`` in the JARVIS config;
 * the allowlist is validated strictly. Any malformed value disables the whole
-  list (fail closed), it never widens access. Wildcards are not supported.
+  list (fail closed), it never widens access. Wildcards are not supported;
+* switches and input booleans require exact entity/service pairs in
+  ``actuation_service_allowlist``; names and device classes grant no authority.
 
 Lock, close-cover and alarm-arm operations stay permitted by default to preserve
 existing safety/lockdown paths. They are not universally harmless, and this
@@ -29,15 +31,16 @@ _LOGGER = logging.getLogger(__name__)
 
 ALLOWLIST_KEY = "actuation_allowlist"
 HA_TOOL_ALLOWLIST_KEY = "ha_api_tool_allowlist"
+SERVICE_ALLOWLIST_KEY = "actuation_service_allowlist"
+NOTIFICATION_ALLOWLIST_KEY = "notification_service_allowlist"
 
-_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
-_TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\Z")
+_TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}\Z")
+_NOTIFY_RE = re.compile(r"notify\.[a-z0-9_]+\Z")
 
 # Allowed without any configuration: low-impact services, plus securing actions.
 _BASE: dict[str, frozenset] = {
     "light": frozenset({"turn_on", "turn_off", "toggle"}),
-    "switch": frozenset({"turn_on", "turn_off", "toggle"}),
-    "input_boolean": frozenset({"turn_on", "turn_off", "toggle"}),
     "fan": frozenset({"turn_on", "turn_off", "toggle", "set_percentage"}),
     "climate": frozenset({"set_temperature", "set_hvac_mode", "turn_on", "turn_off"}),
     "humidifier": frozenset({"turn_on", "turn_off", "set_humidity"}),
@@ -55,6 +58,8 @@ _BASE: dict[str, frozenset] = {
 
 # Allowed only for an entity that is explicitly allowlisted.
 _ELEVATED: dict[str, frozenset] = {
+    "switch": frozenset({"turn_on", "turn_off", "toggle"}),
+    "input_boolean": frozenset({"turn_on", "turn_off", "toggle"}),
     "lock": frozenset({"unlock", "open"}),
     "cover": frozenset({"open_cover", "toggle", "set_cover_position"}),
     "alarm_control_panel": frozenset({
@@ -86,7 +91,8 @@ def _cfg(key: str, default: Any = None) -> Any:
     try:
         from . import jarvis_config
         return jarvis_config.get(key, default)
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("actuation_gate: error accessing config key '%s': %s (failing closed)", key, exc)
         return default   # unreadable config is treated as "nothing allowlisted"
 
 
@@ -106,6 +112,40 @@ def _validated_list(key: str, pattern: "re.Pattern[str]") -> frozenset:
 def allowlist() -> frozenset:
     """Validated set of exact entity ids permitted for elevated services."""
     return _validated_list(ALLOWLIST_KEY, _ENTITY_RE)
+
+
+def notification_service_permitted(service: str) -> bool:
+    """Authorize reviewed output endpoints, not selectors or discovered names."""
+    return (isinstance(service, str)
+            and service not in ("notify.notify", "notify.send_message")
+            and service in _validated_list(NOTIFICATION_ALLOWLIST_KEY, _NOTIFY_RE))
+
+
+def _service_permitted(target: str, domain: str, service: str) -> bool:
+    """Require an exact entity/service pair; malformed policy denies all pairs."""
+    raw = _cfg(SERVICE_ALLOWLIST_KEY)
+    if raw is None:
+        return False
+    if isinstance(raw, dict):
+        valid = True
+        for entity, services in raw.items():
+            if not isinstance(entity, str) or not _ENTITY_RE.fullmatch(entity):
+                valid = False
+                break
+            entity_domain = entity.split(".", 1)[0]
+            supported = _ELEVATED.get(entity_domain, frozenset())
+            if (entity_domain not in ("switch", "input_boolean")
+                    or not isinstance(services, (list, tuple))
+                    or any(not isinstance(s, str)
+                           or s not in {f"{entity_domain}.{v}" for v in supported}
+                           for s in services)):
+                valid = False
+                break
+        if valid:
+            return f"{domain}.{service}" in raw.get(target, ())
+    _LOGGER.warning("JARVIS: %s is invalid; denying all entity/service pairs",
+                    SERVICE_ALLOWLIST_KEY)
+    return False
 
 
 def ha_tool_permitted(tool_name: str) -> bool:
@@ -140,6 +180,12 @@ def authorize(hass, domain: Any, service: Any, data: Any,
         elevated = _ELEVATED.get(domain, frozenset())
         if service not in base and service not in elevated:
             return False, f"{domain}.{service} is not permitted"
+
+        if domain in ("switch", "input_boolean"):
+            if _service_permitted(target, domain, service):
+                return True, ""
+            return False, (f"{domain}.{service} on {target} requires an exact "
+                           f"entity/service pair in {SERVICE_ALLOWLIST_KEY}")
 
         if service in base:
             return True, ""

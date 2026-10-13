@@ -1,7 +1,4 @@
-"""Tests for closing the pattern-engine loop (v6.52.0): a learned suggestion,
-once approved, actually becomes a Home Assistant automation instead of just
-flipping a DB flag. Covers the pure normalizer across every pattern shape the
-analyzer emits, and the async installer wiring end-to-end."""
+"""Advisory automation normalization remains available; installation always denies."""
 import json
 
 import pytest
@@ -123,7 +120,7 @@ def test_sequence_with_lock_installs_valid_service(pa):
     assert "turn_" not in lock_action["action"]      # the bug is gone
 
 
-# ── install_approved_suggestion (async wiring) ───────────────────────────────
+# ── install_approved_suggestion (policy boundary) ────────────────────────────
 
 class _StubAnalyzer:
     def __init__(self, suggestion):
@@ -142,12 +139,12 @@ class _StubAnalyzer:
         self.installed = (sid, auto_id)
 
 
-async def test_installer_installs_concrete_suggestion(pa, fake_hass, monkeypatch):
+async def test_installer_denies_concrete_suggestion_without_approving_or_installing(pa, fake_hass, load, monkeypatch):
     sug = {"id": 7, "description": "learned",
            "automation_yaml": json.dumps({
-               "alias": "porch on at 18:00",
+               "alias": "Example draft",
                "trigger": {"platform": "time", "at": "18:00:00"},
-               "action": {"service": "light.turn_on", "entity_id": "light.porch"},
+               "action": {"service": "light.turn_on", "entity_id": "light.example"},
            })}
     stub = _StubAnalyzer(sug)
     monkeypatch.setattr(pa, "get_analyzer", lambda: stub)
@@ -155,19 +152,20 @@ async def test_installer_installs_concrete_suggestion(pa, fake_hass, monkeypatch
     calls = {}
     async def _fake_create(hass, **kw):
         calls.update(kw)
-        return {"success": True, "automation_id": "jarvis_auto_porch",
-                "alias": "JARVIS · porch on at 18:00"}
-    monkeypatch.setattr("jc.automation_creator.create_automation", _fake_create, raising=False)
+        return {"success": True, "automation_id": "jarvis_auto_example",
+                "alias": "Example draft"}
+    monkeypatch.setattr(load("automation_creator"), "create_automation", _fake_create)
 
     res = await pa.install_approved_suggestion(fake_hass, 7)
-    assert res["ok"] is True and res["installed"] is True
-    assert res["automation_id"] == "jarvis_auto_porch"
-    assert stub.approved == 7                       # approval recorded
-    assert stub.installed == (7, "jarvis_auto_porch")
-    assert calls["alias"] == "porch on at 18:00"    # normalized args passed through
+    assert res["ok"] is False and res["installed"] is False
+    assert "disabled by policy" in res["error"]
+    assert stub.approved is None
+    assert stub.installed is None
+    assert calls == {}
+    assert fake_hass.service_calls == []
 
 
-async def test_installer_advisory_approves_without_install(pa, fake_hass, monkeypatch):
+async def test_installer_does_not_disguise_denial_as_advisory_approval(pa, fake_hass, load, monkeypatch):
     sug = {"id": 9, "description": "note",
            "automation_yaml": json.dumps({"note": "x", "type": "manual_review"})}
     stub = _StubAnalyzer(sug)
@@ -177,12 +175,12 @@ async def test_installer_advisory_approves_without_install(pa, fake_hass, monkey
     async def _fake_create(hass, **kw):
         called["n"] += 1
         return {"success": True, "automation_id": "x", "alias": "x"}
-    monkeypatch.setattr("jc.automation_creator.create_automation", _fake_create, raising=False)
+    monkeypatch.setattr(load("automation_creator"), "create_automation", _fake_create)
 
     res = await pa.install_approved_suggestion(fake_hass, 9)
-    assert res["ok"] is True and res["installed"] is False
-    assert "advisory" in res["reason"]
-    assert stub.approved == 9        # still acknowledged
+    assert res["ok"] is False and res["installed"] is False
+    assert "advisory-only" in res["error"]
+    assert stub.approved is None
     assert stub.installed is None    # nothing written
     assert called["n"] == 0          # create_automation never called
 
@@ -191,23 +189,27 @@ async def test_installer_missing_suggestion(pa, fake_hass, monkeypatch):
     stub = _StubAnalyzer(None)
     monkeypatch.setattr(pa, "get_analyzer", lambda: stub)
     res = await pa.install_approved_suggestion(fake_hass, 404)
-    assert res["ok"] is False and "not found" in res["error"]
+    assert res["ok"] is False and res["installed"] is False
+    assert "disabled by policy" in res["error"]
 
 
-async def test_installer_reports_write_failure(pa, fake_hass, monkeypatch):
+async def test_installer_never_reaches_creator_or_executor(pa, fake_hass, load, monkeypatch):
     sug = {"id": 3, "description": "d",
            "automation_yaml": json.dumps({
                "alias": "a", "trigger": {"platform": "time", "at": "18:00:00"},
-               "action": {"service": "light.turn_on", "entity_id": "light.p"}})}
+               "action": {"service": "light.turn_on", "entity_id": "light.example"}})}
     stub = _StubAnalyzer(sug)
     monkeypatch.setattr(pa, "get_analyzer", lambda: stub)
 
     async def _fail_create(hass, **kw):
-        return {"success": False, "error": "disk full"}
-    monkeypatch.setattr("jc.automation_creator.create_automation", _fail_create, raising=False)
+        raise AssertionError("Installer must not try to create an automation")
+    monkeypatch.setattr(load("automation_creator"), "create_automation", _fail_create)
+    async def _fail_executor(*args):
+        raise AssertionError("Installer must not mutate suggestion approval or write files")
+    monkeypatch.setattr(fake_hass, "async_add_executor_job", _fail_executor)
 
     res = await pa.install_approved_suggestion(fake_hass, 3)
-    assert res["ok"] is True and res["installed"] is False
-    assert "disk full" in res["reason"]
-    assert stub.approved == 3        # approved, just not installed
+    assert res["ok"] is False and res["installed"] is False
+    assert "disabled by policy" in res["error"]
+    assert stub.approved is None
     assert stub.installed is None

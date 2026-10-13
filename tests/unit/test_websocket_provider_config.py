@@ -42,6 +42,43 @@ class _Conn:
         self.error = (msg_id, code, message)
 
 
+async def test_real_suggestion_websocket_denial_has_zero_writes_reload_or_approval(
+    fake_hass, tmp_path, load, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    analyzer = load("pattern_analyzer")
+    _install_jc_module(monkeypatch, "pattern_analyzer", analyzer)
+    path = tmp_path / "automations.yaml"
+    original = b"- id: example\n  alias: Preserve this automation\n"
+    path.write_bytes(original)
+    calls = []
+
+    def denied_path(*args):
+        calls.append(("path", args))
+        raise AssertionError("No automation file access")
+
+    async def denied_executor(*args):
+        calls.append(("executor", args))
+        raise AssertionError("No approval/database/file mutation")
+
+    monkeypatch.setattr(fake_hass.config, "path", denied_path, raising=False)
+    monkeypatch.setattr(fake_hass, "async_add_executor_job", denied_executor)
+    monkeypatch.setattr(analyzer, "get_analyzer",
+                        lambda: pytest.fail("Installation must not access suggestions"))
+    monkeypatch.setattr(websocket, "jarvis_log", lambda *args: None)
+    connection = _Conn()
+    await websocket.ws_suggestion_action(fake_hass, connection, {
+        "id": 1, "suggestion_id": 1, "action": "approve",
+    })
+    assert connection.error is None
+    message_id, result = connection.result
+    assert message_id == 1
+    assert result["ok"] is False and result["installed"] is False
+    assert "disabled by policy" in result["error"]
+    assert calls == fake_hass.service_calls == fake_hass.bus.fired == []
+    assert path.read_bytes() == original
+
+
 def _install_jc_module(monkeypatch, name, module):
     monkeypatch.setitem(sys.modules, f"jc.{name}", module)
     monkeypatch.setattr(sys.modules["jc"], name, module, raising=False)
@@ -1354,7 +1391,7 @@ async def test_suggestion_goal_memory_and_appliance_commands(fake_hass, monkeypa
     pattern_analyzer = _install_jc_module(monkeypatch, "pattern_analyzer", types.SimpleNamespace(
         get_analyzer=lambda: analyzer,
         install_approved_suggestion=lambda hass, sid: _resolved({
-            "ok": True, "installed": True, "alias": "Auto lights",
+            "ok": False, "installed": False, "error": "Installation disabled",
         }),
     ))
     del pattern_analyzer
@@ -1362,7 +1399,7 @@ async def test_suggestion_goal_memory_and_appliance_commands(fake_hass, monkeypa
         "id": 111, "suggestion_id": 4, "action": "approve",
     })
     assert connection.result == (111, {
-        "ok": True, "installed": True, "reason": None, "alias": "Auto lights",
+        "ok": False, "installed": False, "error": "Installation disabled",
     })
     await websocket.ws_suggestion_action(fake_hass, connection, {
         "id": 112, "suggestion_id": 5, "action": "dismiss",
@@ -2225,7 +2262,8 @@ async def test_more_endpoint_alternatives_and_http_errors(fake_hass, monkeypatch
         "id": 172, "suggestion_id": 9, "action": "approve",
     })
     assert connection.result == (172, {
-        "ok": True, "installed": False, "reason": "advisory", "alias": None,
+        "ok": False, "installed": False,
+        "error": importlib.import_module("jc.automation_creator").AUTOMATION_INSTALLATION_ERROR,
     })
 
 

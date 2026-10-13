@@ -812,6 +812,10 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
     """Perform a SAFETY/securing actuation through the universal seam, with the
     fail-toward-protection contract above. Returns True iff the securing action
     was performed (through the seam or the direct fallback). Never raises."""
+    if (domain, service) not in (("lock", "lock"), ("cover", "close_cover")):
+        _LOGGER.warning("safety wrapper denied non-securing service %s.%s on %s",
+                        domain, service, entity_id)
+        return False
     svc_data = dict(data or {"entity_id": entity_id})
 
     async def _direct() -> bool:
@@ -854,10 +858,7 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
             "safety seam error on %s (%s): %s — failing open to a direct call",
             entity_id, capability, exc)
 
-    # Fail toward protection: secure directly so a safety response is never
-    # blocked by a seam fault. Idempotent, so this cannot un-secure anything.
-    # Reaching here means the seam already failed — a `failure` certification
-    # scenario; it closes iff this fail-open recovery secures the home.
+    # Only the securing pairs checked at entry can reach this backstop.
     try:
         _recovered = await _direct()
         _emit_failure_shadow(recovered=_recovered)

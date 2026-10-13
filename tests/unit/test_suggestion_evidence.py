@@ -120,7 +120,9 @@ def test_panel_renders_evidence():
     assert "why_headline" in panel
     assert "What JARVIS observed" in panel
     assert "sug-ev" in panel
-    assert "Create automation" in panel
+    assert "Installation disabled" in panel
+    assert "Review draft YAML" in panel
+    assert "Create automation" not in panel
 
 
 def test_panel_actions_still_wired():

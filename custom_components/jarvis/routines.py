@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
 import yaml
 
@@ -17,6 +16,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 
 from .paths import config_path_str
 from .tts_helper import async_announce
+from . import actuation, actuation_gate
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,6 +76,10 @@ async def async_run_routine(
     Service: jarvis.routine
     Run a named routine by iterating through its steps.
     """
+    if actuation_gate._cfg("routine_execution_enabled", False) is not True:
+        _LOGGER.warning("JARVIS: routine execution is disabled")
+        return {"success": False, "error": "routine_execution_disabled",
+                "steps_executed": 0, "errors": ["Routine execution is disabled"]}
     name: str = call.data["name"].lower().strip()
     routines = await hass.async_add_executor_job(_load_routines)
 
@@ -86,36 +90,62 @@ async def async_run_routine(
         return {"success": False, "error": "unknown_routine"}
 
     steps = routines[name]
+    prepared = []
+    try:
+        if not isinstance(steps, list):
+            raise ValueError("routine must contain a list of steps")
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError("routine step must be a mapping")
+            service = step.get("service")
+            data = {}
+            if service is not None:
+                if not isinstance(service, str) or service.count(".") != 1:
+                    raise ValueError("invalid routine service")
+                domain, svc = service.split(".")
+                raw_data = step.get("data", {})
+                target = step.get("target", {})
+                if not isinstance(raw_data, dict) or not isinstance(target, dict):
+                    raise ValueError("routine data and target must be mappings")
+                if set(target) - {"entity_id"}:
+                    raise ValueError("routine target expansion is not permitted")
+                data = dict(raw_data)
+                if target:
+                    if "entity_id" in data and data["entity_id"] != target["entity_id"]:
+                        raise ValueError("conflicting routine entity targets")
+                    data.update(target)
+                allowed, reason = actuation_gate.authorize(hass, domain, svc, data)
+                if not allowed:
+                    raise PermissionError(reason)
+            prepared.append((step, service, data))
+    except (ValueError, PermissionError) as exc:
+        _LOGGER.warning("JARVIS: routine '%s' denied before dispatch: %s", name, exc)
+        return {"success": False, "routine": name, "steps_executed": 0,
+                "errors": [str(exc)]}
+
     _LOGGER.info("JARVIS: running routine '%s' (%d steps)", name, len(steps))
 
     errors = []
     executed = 0
-    for step in steps:
+    for step, service, data in prepared:
         try:
-            # Announce, if present
+            if service:
+                domain, svc = service.split(".", 1)
+                ok, detail = await actuation.execute_actuator(
+                    hass, capability=service, entity_id=data["entity_id"],
+                    domain=domain, service=svc, data=data, action=svc,
+                    blocking=True)
+                if not ok:
+                    raise RuntimeError(f"{service}: {detail}")
+                executed += 1
             announce_text = step.get("announce")
             if announce_text:
                 text = announce_text.format(honorific=honorific)
                 await async_announce(hass, text, tts_entity, speakers)
-
-            # Service call, if present
-            service = step.get("service")
-            if service:
-                domain, svc = service.split(".", 1)
-                data = step.get("data", {})
-                target = step.get("target") or None
-                try:
-                    await hass.services.async_call(domain, svc, data, target=target, blocking=True)
-                    executed += 1
-                except Exception as exc:
-                    if step.get("optional"):
-                        _LOGGER.debug("JARVIS: optional step '%s' skipped: %s", service, exc)
-                    else:
-                        _LOGGER.warning("JARVIS: step '%s' failed: %s", service, exc)
-                        errors.append(f"{service}: {exc}")
         except Exception as exc:
             _LOGGER.warning("JARVIS: routine step error: %s", exc)
             errors.append(str(exc))
+            break
 
     return {
         "success": not errors,
@@ -123,6 +153,28 @@ async def async_run_routine(
         "steps_executed": executed,
         "errors": errors,
     }
+
+
+async def async_run_routine_service(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    honorific: str,
+    tts_entity: str | None,
+    speakers: list[str],
+) -> dict:
+    """Run a routine and surface any unsuccessful result as an HA service error."""
+    result = await async_run_routine(hass, call, honorific, tts_entity, speakers)
+    if not isinstance(result, dict) or result.get("success") is not True:
+        details = result.get("errors") if isinstance(result, dict) else None
+        if not details and isinstance(result, dict):
+            details = result.get("error", "invalid routine result")
+        if isinstance(details, (list, tuple)):
+            details = "; ".join(str(item) for item in details)
+        from homeassistant.exceptions import HomeAssistantError
+        raise HomeAssistantError(
+            f"Routine {getattr(call, 'data', {}).get('name', '')!r} failed: "
+            f"{details or 'unknown error'}")
+    return result
 
 
 def list_routines() -> list[str]:

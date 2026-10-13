@@ -23,8 +23,8 @@ Classification (a call is allowed iff one holds):
     automation.reload);
   * it is a literal ``media_player`` **playback** service (TTS / announcements);
   * its (file, function) is in ``_ALLOWED_SITES`` with a documented reason
-    (dynamic-domain notify, the execute_plan kernel-planner step, the seam's
-    verify-after-act retry, the generic user-authored routine runner).
+    (the execute_plan kernel-planner step, the seam's verify-after-act retry,
+    or a TTS announcement pipeline operation).
 
 Pure stdlib; no Home Assistant import. Run ``--check`` in CI; bare run lists every
 call and its classification.
@@ -50,11 +50,10 @@ _READONLY_META = frozenset({
 # media_player services that are playback/announcement (TTS), not device control
 _MEDIA_PLAYBACK = frozenset({"play_media", "media_play", "media_stop"})
 
-# ── sites that are not literal-communication yet are legitimately not a bypass ─
+# ── nonliteral-communication sites with a narrowly documented justification ───
 # Keyed (filename, enclosing-function) → reason. Each is either the seam's own
-# machinery or a dynamic-domain communication/macro path that cannot change a
-# device on its own. A NEW direct world-mutating call in a new location is NOT
-# here, so it fails the gate until seam-routed or classified.
+# machinery or part of the fixed TTS announcement pipeline. Configurable
+# notifications use a literal notify domain and need no site exemption.
 _ALLOWED_SITES: dict[tuple[str, str], str] = {
     # execute_plan expresses each step as a kernel Plan and runs it via
     # aexecute_plan; this closure is that plan's execution step (Phase B4) — the
@@ -63,26 +62,11 @@ _ALLOWED_SITES: dict[tuple[str, str], str] = {
     # verify-after-act: _verify_control re-issues the SAME canonical action once
     # as part of the seam's verification step (control_device/H1).
     ("agent.py", "_verify_control"): "seam verify-after-act retry (H1)",
-    # routines: a user-AUTHORED macro of arbitrary service/target/data steps,
-    # executed verbatim — not a JARVIS device decision. Generic dispatcher; the
-    # per-entity seam does not fit arbitrary service+target+data steps.
-    ("routines.py", "async_run_routine"): "generic user-authored macro runner",
-    # config-driven phone/notify pushes (domain/service from notify_service) —
-    # communications, resolve to notify.*.
-    ("sentinel.py", "_announce_rule"): "config-driven notify (communication)",
-    ("appliance_monitor.py", "_announce_done"): "config-driven notify (communication)",
-    ("proactive_briefing.py", "_push_to_phone"): "config-driven notify (communication)",
-    ("cognitive_core.py", "_push_notification"): "config-driven push notify (communication)",
-    ("observer.py", "_send_notification"): "config-driven notify (communication)",
-    ("__init__.py", "_test_notify"): "config-driven test notify (communication)",
     # tts / announcement playback through dynamic service names (jarvis.speak).
     ("proactive_audio.py", "_run_audit"): "jarvis.speak announcement (communication)",
     # the TTS announcement pipeline sets the target speaker's volume before
     # speaking — a playback-pipeline side effect, not a standalone device command.
     ("proactive_audio.py", "_set_volume"): "announcement-pipeline TTS volume (communication)",
-    # ESPHome fallback that starts a voice satellite listening — a voice-pipeline
-    # trigger, not a home device state change.
-    ("voice_confirm.py", "_start_listening"): "voice-satellite start action (communication)",
 }
 
 
