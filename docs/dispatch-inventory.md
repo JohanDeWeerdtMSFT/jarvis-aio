@@ -1,6 +1,6 @@
 # Home Assistant dispatch inventory
 
-This inventory covers direct `hass.services.async_call` sites in the integration and both indirect Home Assistant Assist API dispatch sites. The direct-call gate is `scripts/kernel_bypass_check.py`; it enumerates every direct service call and fails CI for a world-mutating call outside the actuator seam unless the exact site is classified. It uses UTF-8 source reads and excludes the pure `kernel` modules by path.
+This inventory covers direct `hass.services.async_call` sites in the integration and both indirect Home Assistant Assist API dispatch sites. The AST gate is `scripts/kernel_bypass_check.py`; it checks exact direct-service and indirect Assist-tool call sites plus expected call counts, so an unlisted call, added duplicate, or removed call fails CI—even when it uses a communication domain. It uses UTF-8 source reads and excludes the pure `kernel` modules by path.
 
 ## Direct service calls
 

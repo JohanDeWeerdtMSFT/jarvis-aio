@@ -5,7 +5,7 @@
 - After web/mail/document/calendar/camera output enters a reasoning loop, control tools are removed and refused for the rest of that loop.
 - Behaviour change: unlock/open, scripts, scenes and automations no longer run without an allowlist entry. Securing actions still fail open to a direct call, but only if the gate authorizes them.
 - Retrieval provenance is cross-turn: grounded reasoning is read-only for every loop (history, summaries, retries); added end-to-end tests for friendly-name/tool-output injection, replay, summaries and slim retry; summaries are labelled as untrusted data.
-- Remaining review gaps: direct non-actuator service callers and downstream automations are inventoried but not all are action authorization paths; verify actual Home Assistant alias/area resolution in isolated runtime acceptance. Physical-device acceptance remains unverified.
+- Remaining review gaps: downstream automation behavior, third-party dispatch paths and physical-device acceptance remain unverified. Isolated real-HA tests cover persisted aliases and area expansion through the final gate.
 
 ## [9.18.1] — Ollama setup hardening (edge cases from the #383 review)
 

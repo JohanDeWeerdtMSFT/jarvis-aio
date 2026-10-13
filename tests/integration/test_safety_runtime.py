@@ -176,6 +176,36 @@ async def test_local_hazard_denial_is_not_reported_as_success(runtime):
     assert runtime.hass.states.get(entity_id).state == "off"
 
 
+async def test_real_alias_and_area_resolution_reach_final_gate(
+        runtime, monkeypatch, tmp_path):
+    from homeassistant.helpers import area_registry, entity_registry
+
+    monkeypatch.setattr(runtime.hass.config, "config_dir", str(tmp_path))
+    heater = "switch.test_heater"
+    runtime.register(heater, "turn_on")
+    (tmp_path / ".jarvis_learned.json").write_text(
+        json.dumps({"alias": {"heater": heater}}), encoding="utf-8")
+
+    denied = await runtime.local.try_local(runtime.hass, "turn on the heater")
+    await runtime.hass.async_block_till_done()
+    assert denied is not None and not denied.success
+    assert runtime.events == runtime.calls == []
+    assert runtime.hass.states.get(heater).state == "off"
+
+    area = area_registry.async_get(runtime.hass).async_create("Study")
+    entry = entity_registry.async_get(runtime.hass).async_get_or_create(
+        "light", "test", "study-lamp", suggested_object_id="study_lamp",
+        area_id=area.id)
+    runtime.register(entry.entity_id, "turn_on")
+    allowed = await runtime.local.try_local(
+        runtime.hass, "turn on all lights in the study")
+    await runtime.hass.async_block_till_done()
+    expected = [("light", "turn_on", {"entity_id": entry.entity_id})]
+    assert allowed is not None and allowed.success
+    assert runtime.events == runtime.calls == expected
+    assert runtime.hass.states.get(entry.entity_id).state == "on"
+
+
 async def test_persisted_retrieval_injection_cannot_dispatch_next_turn(runtime, monkeypatch):
     from homeassistant.helpers import aiohttp_client
     from custom_components.jarvis import grounded_boundary, memory_thread
