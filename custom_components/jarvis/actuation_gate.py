@@ -11,15 +11,17 @@ decision depends on prompts, wake words, voice confirmation or the LLM:
   comma-separated ids, or area/device/floor/label targets);
 * services that could open, unlock, disarm, trigger arbitrary code (script,
   scene, automation) or drive other security-sensitive classes are denied unless
-  the exact entity id appears in ``actuation_allowlist`` in the JARVIS config;
+  explicitly authorized in the JARVIS config;
 * the allowlist is validated strictly. Any malformed value disables the whole
   list (fail closed), it never widens access. Wildcards are not supported;
-* switches and input booleans require exact entity/service pairs in
-  ``actuation_service_allowlist``; names and device classes grant no authority.
+* switches, input booleans, locks, covers and alarm panels require exact
+  entity/service pairs in ``actuation_service_allowlist``; names and device
+  classes grant no authority.
 
-Lock, close-cover and alarm-arm operations stay permitted by default to preserve
-existing safety/lockdown paths. They are not universally harmless, and this
-foundation does not cover every direct service caller or indirect automation.
+There is no implicit securing-action exception. Lock/access and cover actions
+are denied unless each entity/service pair is explicitly authorized. This gate
+does not prove that an authorized switch or helper has no hazardous downstream
+automation.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ _ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\Z")
 _TOOL_RE = re.compile(r"^[A-Za-z0-9_]{1,64}\Z")
 _NOTIFY_RE = re.compile(r"notify\.[a-z0-9_]+\Z")
 
-# Allowed without any configuration: low-impact services, plus securing actions.
+# Allowed without any configuration: ordinary, non-access device services.
 _BASE: dict[str, frozenset] = {
     "light": frozenset({"turn_on", "turn_off", "toggle"}),
     "fan": frozenset({"turn_on", "turn_off", "toggle", "set_percentage"}),
@@ -50,33 +52,29 @@ _BASE: dict[str, frozenset] = {
         "media_play_pause", "media_stop", "media_next_track",
         "media_previous_track", "volume_up", "volume_down", "volume_set",
         "volume_mute"}),
-    "lock": frozenset({"lock"}),
-    "cover": frozenset({"close_cover", "stop_cover"}),
-    "alarm_control_panel": frozenset({
-        "alarm_arm_home", "alarm_arm_away", "alarm_arm_night"}),
 }
 
-# Allowed only for an entity that is explicitly allowlisted.
+# Elevated services are allowlisted by entity, except the exact-pair policy
+# domains below, which never accept entity-only authorization.
 _ELEVATED: dict[str, frozenset] = {
     "switch": frozenset({"turn_on", "turn_off", "toggle"}),
     "input_boolean": frozenset({"turn_on", "turn_off", "toggle"}),
-    "lock": frozenset({"unlock", "open"}),
-    "cover": frozenset({"open_cover", "toggle", "set_cover_position"}),
+    "lock": frozenset({"lock", "unlock", "open"}),
+    "cover": frozenset({
+        "open_cover", "close_cover", "stop_cover", "toggle",
+        "set_cover_position"}),
     "alarm_control_panel": frozenset({
-        "alarm_disarm", "alarm_trigger", "alarm_arm_vacation",
-        "alarm_arm_custom_bypass"}),
-    "script": frozenset({"turn_on"}),
-    "scene": frozenset({"turn_on"}),
-    "automation": frozenset({"trigger"}),
+        "alarm_arm_home", "alarm_arm_away", "alarm_arm_night",
+        "alarm_arm_vacation", "alarm_arm_custom_bypass",
+        "alarm_disarm", "alarm_trigger"}),
     "siren": frozenset({"turn_on", "turn_off", "toggle"}),
     "valve": frozenset({"open_valve", "close_valve", "set_valve_position"}),
     "camera": frozenset({"turn_on", "turn_off"}),
 }
 
-# Cover device classes that are not an entry point to the home.
-_SAFE_COVER_CLASSES = frozenset({
-    "awning", "blind", "curtain", "damper", "shade", "shutter"})
-_SAFE_COVER_OPENING = frozenset({"open_cover", "toggle", "set_cover_position"})
+_EXACT_SERVICE_POLICY_DOMAINS = frozenset({
+    "switch", "input_boolean", "lock", "cover", "alarm_control_panel",
+})
 
 # Target keys that would widen a call beyond the single entity we authorized.
 _FORBIDDEN_DATA_KEYS = frozenset({
@@ -134,7 +132,7 @@ def _service_permitted(target: str, domain: str, service: str) -> bool:
                 break
             entity_domain = entity.split(".", 1)[0]
             supported = _ELEVATED.get(entity_domain, frozenset())
-            if (entity_domain not in ("switch", "input_boolean")
+            if (entity_domain not in _EXACT_SERVICE_POLICY_DOMAINS
                     or not isinstance(services, (list, tuple))
                     or any(not isinstance(s, str)
                            or s not in {f"{entity_domain}.{v}" for v in supported}
@@ -181,7 +179,7 @@ def authorize(hass, domain: Any, service: Any, data: Any,
         if service not in base and service not in elevated:
             return False, f"{domain}.{service} is not permitted"
 
-        if domain in ("switch", "input_boolean"):
+        if domain in _EXACT_SERVICE_POLICY_DOMAINS:
             if _service_permitted(target, domain, service):
                 return True, ""
             return False, (f"{domain}.{service} on {target} requires an exact "
@@ -190,22 +188,9 @@ def authorize(hass, domain: Any, service: Any, data: Any,
         if service in base:
             return True, ""
 
-        if (domain == "cover" and service in _SAFE_COVER_OPENING
-                and _cover_class(hass, target) in _SAFE_COVER_CLASSES):
-            return True, ""
-
         if target in allowlist():
             return True, ""
         return False, (f"{domain}.{service} on {target} requires the entity to "
                        f"be listed in {ALLOWLIST_KEY}")
     except Exception as exc:   # pragma: no cover - defensive, fail closed
         return False, f"authorization error: {exc}"
-
-
-def _cover_class(hass, entity_id: str) -> Optional[str]:
-    try:
-        st = hass.states.get(entity_id)
-        cls = st.attributes.get("device_class") if st is not None else None
-        return cls if isinstance(cls, str) else None
-    except Exception:
-        return None

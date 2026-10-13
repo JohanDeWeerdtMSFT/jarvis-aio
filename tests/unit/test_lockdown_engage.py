@@ -27,7 +27,24 @@ def _calls(fake_hass, domain, service):
     return [c for c in fake_hass.service_calls if c[0] == domain and c[1] == service]
 
 
-async def test_engage_locks_and_closes_garage(cc, fake_hass):
+@pytest.fixture
+def cfg(load, monkeypatch):
+    values = {}
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: values.get(key, default))
+    return values
+
+
+def _allow(cfg, *pairs):
+    cfg["actuation_service_allowlist"] = {
+        entity: [f"{domain}.{service}"]
+        for entity, domain, service in pairs
+    }
+
+
+async def test_engage_locks_and_closes_garage(cc, fake_hass, cfg):
+    _allow(cfg, ("lock.front", "lock", "lock"),
+           ("cover.garage_door", "cover", "close_cover"))
     fake_hass.states.set("lock.front", "unlocked", friendly_name="Front Lock")
     fake_hass.states.set("cover.garage_door", "open", device_class="garage",
                          friendly_name="Garage Door")
@@ -57,7 +74,8 @@ async def test_bare_window_is_not_closed(cc, fake_hass):
     assert "binary_sensor.window" in mgr.exempt_windows
 
 
-async def test_closed_garage_not_treated_as_intentional_open(cc, fake_hass):
+async def test_closed_garage_not_treated_as_intentional_open(cc, fake_hass, cfg):
+    _allow(cfg, ("cover.garage_door", "cover", "close_cover"))
     fake_hass.states.set("cover.garage_door", "open", device_class="garage")
     mgr = _mgr(cc, fake_hass)
     await mgr.engage("test")
@@ -67,7 +85,8 @@ async def test_closed_garage_not_treated_as_intentional_open(cc, fake_hass):
     assert "cover.garage_door" in mgr._secured_by_us
 
 
-async def test_silent_engage_secures_without_announcing(cc, fake_hass):
+async def test_silent_engage_secures_without_announcing(cc, fake_hass, cfg):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     fake_hass.states.set("lock.front", "unlocked")
     mgr = _mgr(cc, fake_hass)
     action = await mgr.engage("startup", auto=True, announce=False)

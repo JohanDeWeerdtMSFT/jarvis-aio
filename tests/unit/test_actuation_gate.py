@@ -90,20 +90,56 @@ def test_malformed_input_denied(gate, cfg):
     assert gate.authorize(FakeHass(), "light", "turn_on", None)[0] is False
 
 
-def test_low_impact_and_securing_actions_allowed(gate, cfg):
+def test_ordinary_actions_allowed_but_access_actions_deny_by_default(gate, cfg):
     assert _call(gate, "light", "turn_on", "light.kitchen")
-    assert _call(gate, "lock", "lock", "lock.front_door")
-    assert _call(gate, "cover", "close_cover", "cover.garage_door")
-    assert _call(gate, "alarm_control_panel", "alarm_arm_away", "alarm_control_panel.home")
+    assert not _call(gate, "lock", "lock", "lock.front_door")
+    assert not _call(gate, "cover", "close_cover", "cover.garage_door")
+    assert not _call(
+        gate, "alarm_control_panel", "alarm_arm_away", "alarm_control_panel.home")
 
 
-def test_blind_cover_may_open_but_garage_may_not(gate, cfg):
+def test_cover_device_class_does_not_authorize_opening(gate, cfg):
     hass = FakeHass()
     hass.states.set("cover.blind", "closed", device_class="blind")
     hass.states.set("cover.garage", "closed", device_class="garage")
-    assert gate.authorize(hass, "cover", "open_cover", {"entity_id": "cover.blind"})[0]
+    assert not gate.authorize(
+        hass, "cover", "open_cover", {"entity_id": "cover.blind"})[0]
     assert not gate.authorize(hass, "cover", "open_cover", {"entity_id": "cover.garage"})[0]
     assert not gate.authorize(hass, "cover", "open_cover", {"entity_id": "cover.unknown"})[0]
+
+
+@pytest.mark.parametrize(("domain", "service", "entity"), [
+    ("lock", "lock", "lock.front_door"),
+    ("lock", "unlock", "lock.front_door"),
+    ("cover", "close_cover", "cover.garage_door"),
+    ("cover", "open_cover", "cover.blind"),
+    ("alarm_control_panel", "alarm_arm_away", "alarm_control_panel.home"),
+    ("alarm_control_panel", "alarm_disarm", "alarm_control_panel.home"),
+])
+async def test_access_service_denial_and_exact_pair_authorization(
+        gate, cfg, act, domain, service, entity):
+    hass = FakeHass()
+    hass.states.set(entity, "off", device_class="blind")
+    data = {"entity_id": entity}
+    ok, _ = await act.execute_actuator(
+        hass, capability=f"{domain}.{service}", entity_id=entity,
+        domain=domain, service=service, data=data, action=service)
+    assert ok is False
+    assert hass.service_calls == []
+
+    cfg["actuation_allowlist"] = [entity]
+    ok, _ = await act.execute_actuator(
+        hass, capability=f"{domain}.{service}", entity_id=entity,
+        domain=domain, service=service, data=data, action=service)
+    assert ok is False  # entity-only entries are insufficient for access actions
+    assert hass.service_calls == []
+
+    cfg["actuation_service_allowlist"] = {entity: [f"{domain}.{service}"]}
+    ok, _ = await act.execute_actuator(
+        hass, capability=f"{domain}.{service}", entity_id=entity,
+        domain=domain, service=service, data=data, action=service)
+    assert ok is True
+    assert hass.service_calls == [(domain, service, data)]
 
 
 # ── scripts / scenes / automations ───────────────────────────────────────────
@@ -117,10 +153,14 @@ def test_script_scene_automation_denied_by_default(gate, cfg, domain, service, e
     assert _call(gate, domain, service, entity) is False
 
 
-def test_allowlist_is_exact_per_entity(gate, cfg):
-    cfg["actuation_allowlist"] = ["script.goodnight"]
-    assert _call(gate, "script", "turn_on", "script.goodnight") is True
-    assert _call(gate, "script", "turn_on", "script.other") is False
+def test_execution_domains_remain_denied_even_with_entity_allowlist(gate, cfg):
+    for domain, service, entity in (
+        ("script", "turn_on", "script.goodnight"),
+        ("scene", "turn_on", "scene.movie"),
+        ("automation", "trigger", "automation.morning"),
+    ):
+        cfg["actuation_allowlist"] = [entity]
+        assert _call(gate, domain, service, entity) is False
     assert _call(gate, "lock", "unlock", "lock.goodnight") is False
 
 
@@ -409,16 +449,17 @@ async def test_execute_actuator_blocks_before_service_call(act, cfg):
     assert hass.service_calls == []
 
 
-async def test_execute_actuator_allows_allowlisted_entity(act, cfg):
+async def test_execute_actuator_denies_entity_allowlisted_script(act, cfg):
     cfg["actuation_allowlist"] = ["script.goodnight"]
     hass = FakeHass()
     hass.states.set("script.goodnight", "off")
-    ok, _ = await act.execute_actuator(
+    ok, detail = await act.execute_actuator(
         hass, capability="script.turn_on", entity_id="script.goodnight",
         domain="script", service="turn_on",
         data={"entity_id": "script.goodnight"}, action="run")
-    assert ok is True
-    assert any(c[0] == "script" for c in hass.service_calls)
+    assert ok is False
+    assert "not permitted" in detail
+    assert hass.service_calls == []
 
 
 async def test_guarded_call_raises_and_never_dispatches(act, cfg):
@@ -456,6 +497,7 @@ async def test_safety_path_denies_unauthorized_but_secures(act, cfg):
         action="unlock")
     assert ok is False
     assert hass.service_calls == []
+    cfg["actuation_service_allowlist"] = {"lock.front": ["lock.lock"]}
     ok = await act.execute_safety_actuator(
         hass, capability="lock.lock", entity_id="lock.front",
         domain="lock", service="lock", data={"entity_id": "lock.front"},

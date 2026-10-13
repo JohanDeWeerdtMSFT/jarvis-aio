@@ -3,6 +3,7 @@ import sys
 import types
 
 import pytest
+from fakes import FakeHass
 
 
 class _Area:
@@ -88,6 +89,55 @@ def test_underscore_and_spacing_variants(pa):
 def test_unknown_area_returns_none(pa):
     assert pa._resolve_area_id(None, "garage") is None
     assert pa._resolve_area_id(None, "") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entity_id", "expected_calls"),
+    [
+        ("media_player.office_speaker", 2),
+        ("media_player.office_speaker\n", 0),
+    ],
+)
+async def test_announce_volume_dispatch_uses_resolved_speakers_and_actuator_gate(
+    pa, monkeypatch, entity_id, expected_calls,
+):
+    hass = FakeHass()
+    hass.states.set(entity_id, "idle", volume_level=0.35)
+    monkeypatch.setattr(pa.audio_routing, "entity_area", lambda _h, _e: "01HULID")
+    _inject_jarvis_config(monkeypatch, "")
+    entity_filter = types.ModuleType("jc.entity_filter")
+    entity_filter.is_excluded = lambda _h, _e: False
+    monkeypatch.setitem(sys.modules, "jc.entity_filter", entity_filter)
+    monkeypatch.setattr(
+        pa, "_build_telemetry",
+        lambda *_args: {"media_active": False},
+    )
+    monkeypatch.setattr(
+        pa._PROSODY, "calculate_vocal_profile",
+        lambda _telemetry: {
+            "volume": 0.7, "speech_rate": 1.0, "style": "test",
+            "duck_media": True,
+        },
+    )
+    monkeypatch.setattr(pa, "_proximity_enabled", lambda: False)
+
+    async def no_speech(*_args, **_kwargs):
+        return None
+
+    async def no_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(pa, "_speak_tts", no_speech)
+    monkeypatch.setattr(pa.asyncio, "sleep", no_sleep)
+
+    await pa._announce(hass, "Test announcement", "01HULID", False)
+
+    assert [call[:2] for call in hass.service_calls] == (
+        [("media_player", "volume_set")] * expected_calls
+    )
+    if expected_calls:
+        assert all(call[2]["entity_id"] == entity_id for call in hass.service_calls)
 
 
 def test_known_area_labels_for_diagnostics(pa):

@@ -83,7 +83,8 @@ async def test_unlock_actuates_fast_when_confirmation_disabled(load, monkeypatch
     _install_vc(monkeypatch, protected=False)
     jc = load("jarvis_config")
     monkeypatch.setattr(jc, "get", lambda k, d=None:
-                        ["lock.front_door"] if k == "actuation_allowlist" else d)
+                        {"lock.front_door": ["lock.unlock"]}
+                        if k == "actuation_service_allowlist" else d)
     h = _hass_with_lock()
     result = await le.try_local(h, "unlock the front door", "sir")
     assert result is not None and result.handled

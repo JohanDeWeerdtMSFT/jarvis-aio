@@ -17,6 +17,14 @@ def agent(load):
 
 
 @pytest.fixture
+def cfg(load, monkeypatch):
+    values = {}
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: values.get(key, default))
+    return values
+
+
+@pytest.fixture
 def fast_sleep(agent, monkeypatch):
     calls = {"n": 0, "hook": None}
     async def _sleep(_secs):
@@ -39,7 +47,10 @@ def _retries(fake_hass, domain, service):
     return [c for c in fake_hass.service_calls if c[0] == domain and c[1] == service]
 
 
-async def test_persistent_failure_retries_once_and_logs(agent, fake_hass, fast_sleep, activity):
+async def test_persistent_failure_retries_once_and_logs(
+        agent, fake_hass, fast_sleep, activity, cfg):
+    cfg["actuation_service_allowlist"] = {
+        "cover.garage_door": ["cover.close_cover"]}
     fake_hass.states.set("cover.garage_door", "open")   # never reaches 'closed'
     out = await agent._exec_control_device(
         fake_hass, {"entity_id": "cover.garage_door", "action": "close"})
@@ -64,7 +75,8 @@ async def test_success_first_try_is_silent(agent, fake_hass, fast_sleep, activit
     assert activity == []                                          # silent
 
 
-async def test_recovery_on_retry_logs_low(agent, fake_hass, fast_sleep, activity):
+async def test_recovery_on_retry_logs_low(agent, fake_hass, fast_sleep, activity, cfg):
+    cfg["actuation_service_allowlist"] = {"lock.front": ["lock.lock"]}
     fake_hass.states.set("lock.front", "unlocked")
     # flip to locked during the post-retry sleep (2nd sleep on this path)
     fast_sleep["hook"] = (lambda n: fake_hass.states.set("lock.front", "locked")
@@ -77,7 +89,10 @@ async def test_recovery_on_retry_logs_low(agent, fake_hass, fast_sleep, activity
     assert "retry" in activity[0]["message"]
 
 
-async def test_transitional_state_gets_grace_then_passes(agent, fake_hass, fast_sleep, activity):
+async def test_transitional_state_gets_grace_then_passes(
+        agent, fake_hass, fast_sleep, activity, cfg):
+    cfg["actuation_service_allowlist"] = {
+        "cover.garage_door": ["cover.close_cover"]}
     fake_hass.states.set("cover.garage_door", "open")
     async def call_then_move(domain, service, data=None, blocking=False, **kw):
         fake_hass.service_calls.append((domain, service, dict(data or {})))

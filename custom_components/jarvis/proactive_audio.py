@@ -522,12 +522,21 @@ def _tts_options(profile: dict) -> dict:
 
 
 async def _set_volume(hass: HomeAssistant, entity_id: str, level: float) -> None:
-    await hass.services.async_call(
-        "media_player",
-        "volume_set",
-        {"entity_id": entity_id, "volume_level": max(0.0, min(1.0, level))},
-        blocking=True,
+    from . import actuation
+
+    data = {
+        "entity_id": entity_id,
+        "volume_level": max(0.0, min(1.0, level)),
+    }
+    capability = "media_player.volume_set"
+    areq = actuation.request(capability, entity_id, params=data, action="volume_set")
+    ok, detail = await actuation.execute_actuator(
+        hass, capability=capability, entity_id=entity_id,
+        domain="media_player", service="volume_set", data=data,
+        action="volume_set", areq=areq, blocking=True,
     )
+    if not ok:
+        raise RuntimeError(f"{capability} on {entity_id} failed: {detail}")
 
 
 async def _speak_tts(

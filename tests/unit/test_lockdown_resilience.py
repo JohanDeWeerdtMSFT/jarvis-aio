@@ -182,7 +182,12 @@ async def _engage(cc, hass):
     return cc._CORE.lockdown_mgr
 
 
-async def test_new_open_controllable_cover_is_closed(cognitive_core, fake_hass):
+async def test_new_open_controllable_cover_is_closed(
+        cognitive_core, fake_hass, load, monkeypatch):
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: {
+        "cover.garage_door": ["cover.close_cover"],
+    } if key == "actuation_service_allowlist" else default)
     mgr = await _engage(cognitive_core, fake_hass)
     fake_hass.service_calls.clear()
     old = FakeState("cover.garage_door", "closed", {"device_class": "garage"})

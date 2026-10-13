@@ -22,6 +22,14 @@ def agent(load):
     return load("agent")
 
 
+@pytest.fixture
+def cfg(load, monkeypatch):
+    values = {}
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: values.get(key, default))
+    return values
+
+
 # ── 8.30.0: WorldModel is the pre-action context authority ───────────────────
 
 async def test_previous_state_comes_from_worldmodel_snapshot(agent, fake_hass):
@@ -110,7 +118,9 @@ async def test_outcome_verified_on_success(agent, fake_hass, no_sleep, outcomes)
 
 
 async def test_outcome_mismatch_when_world_never_reaches_expected(
-        agent, fake_hass, no_sleep, outcomes):
+        agent, fake_hass, no_sleep, outcomes, cfg):
+    cfg["actuation_service_allowlist"] = {
+        "cover.garage_door": ["cover.close_cover"]}
     fake_hass.states.set("cover.garage_door", "open")   # never becomes 'closed'
     await agent._exec_control_device(
         fake_hass, {"entity_id": "cover.garage_door", "action": "close"})
@@ -208,7 +218,9 @@ def test_shadow_control_plan_no_expected(load):
     assert plan is not None and plan.steps[0].postconditions == ()
 
 
-async def test_control_device_routes_execution_through_planner(agent, fake_hass, no_sleep, load, monkeypatch):
+async def test_control_device_routes_execution_through_planner(
+        agent, fake_hass, no_sleep, load, monkeypatch, cfg):
+    cfg["actuation_service_allowlist"] = {"lock.front": ["lock.lock"]}
     """B4b: the actuation runs *through* the kernel planner (aexecute_plan), and
     the device service call still happens exactly once."""
     kplan = load("kernel.plan")
