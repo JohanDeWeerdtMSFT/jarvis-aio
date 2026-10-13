@@ -55,18 +55,8 @@ _MEDIA_PLAYBACK = frozenset({"play_media", "media_play", "media_stop"})
 # machinery or part of the fixed TTS announcement pipeline. Configurable
 # notifications use a literal notify domain and need no site exemption.
 _ALLOWED_SITES: dict[tuple[str, str], str] = {
-    # execute_plan expresses each step as a kernel Plan and runs it via
-    # aexecute_plan; this closure is that plan's execution step (Phase B4) — the
-    # seam's planner contract, not a bypass.
-    ("agent.py", "_run"): "execute_plan kernel-planner execution step (B4)",
-    # verify-after-act: _verify_control re-issues the SAME canonical action once
-    # as part of the seam's verification step (control_device/H1).
-    ("agent.py", "_verify_control"): "seam verify-after-act retry (H1)",
     # tts / announcement playback through dynamic service names (jarvis.speak).
     ("proactive_audio.py", "_run_audit"): "jarvis.speak announcement (communication)",
-    # the TTS announcement pipeline sets the target speaker's volume before
-    # speaking — a playback-pipeline side effect, not a standalone device command.
-    ("proactive_audio.py", "_set_volume"): "announcement-pipeline TTS volume (communication)",
 }
 
 

@@ -13,6 +13,14 @@ def actuation(load):
     return load("actuation")
 
 
+@pytest.fixture
+def cfg(load, monkeypatch):
+    values = {}
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: values.get(key, default))
+    return values
+
+
 def _req(load, cap="light.turn_on", target="light.den", **kw):
     act = load("kernel.actuator")
     return act.build_actuator_request(cap, target=target, **kw)
@@ -58,7 +66,8 @@ async def test_seam_publishes_event_on_success(actuation, fake_hass, load, monke
     assert kw.get("area") == "den" and kw.get("action") == "turn_on"
 
 
-async def test_seam_schedules_verify_on_success(actuation, fake_hass, load):
+async def test_seam_schedules_verify_on_success(actuation, fake_hass, load, cfg):
+    cfg["actuation_service_allowlist"] = {"lock.front": ["lock.lock"]}
     fake_hass.states.set("lock.front", "unlocked")
     ran = {"verify": False}
 
@@ -98,6 +107,32 @@ async def test_seam_failure_returns_error_no_event_no_verify(actuation, fake_has
     assert detail  # carries the failure reason
     assert published == []       # no event on failure
     assert ran["verify"] is False  # no verify scheduled on failure
+
+
+@pytest.mark.parametrize("result", [
+    False,
+    {"ok": False, "error": "device unavailable"},
+    {"success": False},
+])
+async def test_seam_explicit_service_failure_is_reported(
+        actuation, fake_hass, load, result):
+    fake_hass.states.set("light.den", "off")
+
+    async def return_failure(domain, service, data=None, blocking=False, **kw):
+        fake_hass.service_calls.append((domain, service, dict(data or {})))
+        return result
+
+    fake_hass.services.async_call = return_failure
+    ok, detail = await actuation.execute_actuator(
+        fake_hass, capability="light.turn_on", entity_id="light.den",
+        domain="light", service="turn_on", data={"entity_id": "light.den"},
+        action="turn_on", areq=_req(load))
+    assert ok is False
+    assert "returned failure" in detail
+    assert str(result) in detail
+    assert fake_hass.service_calls == [
+        ("light", "turn_on", {"entity_id": "light.den"}),
+    ]
 
 
 async def test_seam_honors_blocking_flag(actuation, fake_hass, load):

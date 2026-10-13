@@ -678,7 +678,11 @@ async def guarded_call(hass, domain: str, service: str, data: dict, *,
     if not ok:
         _LOGGER.warning("actuation gate denied %s.%s: %s", domain, service, reason)
         raise PermissionError(f"blocked by authorization gate: {reason}")
-    await hass.services.async_call(domain, service, dict(data), blocking=blocking)
+    result = await hass.services.async_call(
+        domain, service, dict(data), blocking=blocking)
+    from .output_dispatch import service_succeeded
+    if not service_succeeded(result):
+        raise RuntimeError(f"{domain}.{service} returned failure: {result}")
 
 
 async def execute_actuator(hass, *, capability: str, entity_id: str,

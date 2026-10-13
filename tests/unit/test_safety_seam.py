@@ -1,16 +1,7 @@
-"""MCU Phase H (H8): the SAFETY policy-mode actuator seam.
+"""Safety-seam tests.
 
-Securing the home against a threat (intrusion lockdown, nighttime lockdown) was
-the last actuator path that still called hass.services directly, bypassing the
-universal seam. H8 routes it through ``actuation.execute_safety_actuator`` — but
-under a FAIL-TOWARD-PROTECTION contract, the opposite of the discretionary path:
-
-  * it is NEVER budget/loop-blocked (the seam doesn't consult those gates);
-  * verification is mandatory (a securing action that didn't land is a failure);
-  * on ANY seam/kernel fault — or any non-success — it FAILS OPEN to a direct
-    hass.services call, so the home is still secured (lock/close_cover are
-    idempotent, so the backstop can never leave the home less secure);
-  * a one-line kill-switch (SAFETY_SEAM_ENFORCE) reverts it to the direct call.
+Lock and cover actions require exact entity/service policy pairs. The safety
+fallback is available only after that deterministic authorization succeeds.
 """
 import logging
 
@@ -20,7 +11,15 @@ from fakes import FakeHass
 
 
 @pytest.fixture
-def act(load):
+def cfg(load, monkeypatch):
+    values = {}
+    config = load("jarvis_config")
+    monkeypatch.setattr(config, "get", lambda key, default=None: values.get(key, default))
+    return values
+
+
+@pytest.fixture
+def act(load, cfg):
     mod = load("actuation")
     mod._autonomous_budget = None
     mod._autonomous_loop = None
@@ -29,13 +28,21 @@ def act(load):
     return mod
 
 
+def _allow(cfg, *pairs):
+    cfg["actuation_service_allowlist"] = {
+        entity: [f"{domain}.{service}"]
+        for entity, domain, service in pairs
+    }
+
+
 def _locks(hass):
     return [c for c in hass.service_calls if c[0] == "lock" and c[1] == "lock"]
 
 
 # ── happy path: routes through the seam ──────────────────────────────────────
 
-async def test_safety_actuator_secures_through_seam(act):
+async def test_safety_actuator_secures_through_seam(act, cfg):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     hass = FakeHass()
     hass.states.set("lock.front", "unlocked")
     ok = await act.execute_safety_actuator(
@@ -49,7 +56,8 @@ async def test_safety_actuator_secures_through_seam(act):
     assert len(_locks(hass)) == 1          # secured exactly once (no double-call)
 
 
-async def test_safety_actuator_publishes_actuation_event(act, load, monkeypatch):
+async def test_safety_actuator_publishes_actuation_event(act, cfg, load, monkeypatch):
+    _allow(cfg, ("cover.garage", "cover", "close_cover"))
     ev = load("events")
     published = []
     monkeypatch.setattr(ev, "publish", lambda hass, e: published.append(e))
@@ -68,7 +76,8 @@ async def test_safety_actuator_publishes_actuation_event(act, load, monkeypatch)
 
 # ── never blocked by budget / loop ───────────────────────────────────────────
 
-async def test_safety_is_never_budget_blocked(act):
+async def test_safety_is_never_budget_blocked(act, cfg):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     # Exhaust the autonomous budget and trip the loop detector; a safety securing
     # action still fires — it does not route through those gates at all.
     import time
@@ -90,7 +99,8 @@ async def test_safety_is_never_budget_blocked(act):
 
 # ── fail toward protection ───────────────────────────────────────────────────
 
-async def test_fails_open_to_direct_call_on_seam_error(act, monkeypatch, caplog):
+async def test_fails_open_to_direct_call_on_seam_error(act, cfg, monkeypatch, caplog):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     # If the seam itself raises, the home is still secured by a direct call.
     async def _boom(*a, **k):
         raise RuntimeError("kernel exploded")
@@ -108,7 +118,8 @@ async def test_fails_open_to_direct_call_on_seam_error(act, monkeypatch, caplog)
     assert any("failing open to a direct call" in r.message for r in caplog.records)
 
 
-async def test_fails_open_when_seam_reports_non_success(act, monkeypatch):
+async def test_fails_open_when_seam_reports_non_success(act, cfg, monkeypatch):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     # If the seam returns (False, detail) — e.g. a precondition didn't hold — the
     # safety path still secures directly rather than silently withholding.
     async def _nope(*a, **k):
@@ -124,7 +135,8 @@ async def test_fails_open_when_seam_reports_non_success(act, monkeypatch):
     assert ("lock", "lock", {"entity_id": "lock.front"}) in hass.service_calls
 
 
-async def test_returns_false_only_when_even_direct_call_fails(act, monkeypatch):
+async def test_returns_false_only_when_even_direct_call_fails(act, cfg, monkeypatch):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     async def _boom(*a, **k):
         raise RuntimeError("seam down")
     monkeypatch.setattr(act, "execute_actuator", _boom)
@@ -143,7 +155,8 @@ async def test_returns_false_only_when_even_direct_call_fails(act, monkeypatch):
 
 # ── kill switch ──────────────────────────────────────────────────────────────
 
-async def test_kill_switch_reverts_to_direct_call(act, monkeypatch):
+async def test_kill_switch_reverts_to_direct_call(act, cfg, monkeypatch):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     monkeypatch.setattr(act, "SAFETY_SEAM_ENFORCE", False)
     seam_called = []
 
@@ -166,9 +179,30 @@ def test_default_kill_switch_is_enforce(act):
     assert act.SAFETY_SEAM_ENFORCE is True
 
 
+async def test_safety_denial_never_reaches_seam_or_direct_fallback(
+        act, monkeypatch):
+    seam_calls = []
+
+    async def _spy(*a, **k):
+        seam_calls.append(1)
+        return (True, "")
+
+    monkeypatch.setattr(act, "execute_actuator", _spy)
+    hass = FakeHass()
+    hass.states.set("lock.front", "unlocked")
+    ok = await act.execute_safety_actuator(
+        hass, capability="lock.lock", entity_id="lock.front",
+        domain="lock", service="lock", data={"entity_id": "lock.front"},
+        action="lock")
+    assert ok is False
+    assert seam_calls == []
+    assert hass.service_calls == []
+
+
 # ── verification is scheduled (mandatory) ────────────────────────────────────
 
-async def test_verify_is_scheduled_for_securing(act, monkeypatch):
+async def test_verify_is_scheduled_for_securing(act, cfg, monkeypatch):
+    _allow(cfg, ("lock.front", "lock", "lock"))
     scheduled = []
     real_exec = act.execute_actuator
 
@@ -199,7 +233,8 @@ def _isolate_lockdown(tmp_path, monkeypatch, cc):
     yield
 
 
-async def test_lock_all_secures_through_seam_and_is_unbudgeted(cc, act):
+async def test_lock_all_secures_through_seam_and_is_unbudgeted(cc, act, cfg):
+    _allow(cfg, ("lock.back", "lock", "lock"))
     # Exhaust the autonomous budget and trip the loop detector; the lockdown
     # _lock_all still secures — the safety seam never consults either gate.
     import time
@@ -217,7 +252,10 @@ async def test_lock_all_secures_through_seam_and_is_unbudgeted(cc, act):
     assert ("lock", "lock", {"entity_id": "lock.back"}) in hass.service_calls
 
 
-async def test_secure_entity_routes_lock_and_cover_through_seam(cc):
+async def test_secure_entity_routes_lock_and_cover_through_seam(cc, cfg):
+    _allow(
+        cfg, ("lock.side", "lock", "lock"),
+        ("cover.gate", "cover", "close_cover"))
     hass = FakeHass()
     hass.states.set("lock.side", "unlocked")
     hass.states.set("cover.gate", "open")
@@ -229,7 +267,9 @@ async def test_secure_entity_routes_lock_and_cover_through_seam(cc):
     assert ("cover", "close_cover", {"entity_id": "cover.gate"}) in hass.service_calls
 
 
-async def test_secure_entity_still_secures_when_seam_errors(cc, act, monkeypatch):
+async def test_secure_entity_still_secures_when_seam_errors(
+        cc, act, cfg, monkeypatch):
+    _allow(cfg, ("lock.side", "lock", "lock"))
     # Fail toward protection end-to-end: a seam fault doesn't stop the securing.
     async def _boom(*a, **k):
         raise RuntimeError("seam down")
