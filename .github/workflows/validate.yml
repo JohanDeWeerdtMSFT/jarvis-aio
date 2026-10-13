@@ -104,15 +104,13 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install integration-test dependencies
-        # PHACC provides the real `hass` fixture (and pulls in homeassistant +
-        # pytest-asyncio). home-assistant-frontend supplies the `hass_frontend`
-        # module that the frontend/panel_custom hard dependencies need during
-        # setup. Install conversation's exact requirements from the installed
-        # HA manifest for the public-API test; do not guess versions independently
-        # of PHACC's HA pin. Model/search adapters remain synthetic.
+        # Use the existing pinned runtime-test lock for PHACC, Home Assistant,
+        # and its frontend dependency. Install conversation's exact requirements
+        # from that pinned HA manifest for the public-API test; model/search
+        # adapters remain synthetic.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest-homeassistant-custom-component home-assistant-frontend
+          python -m pip install -r requirements-hacs-test.txt
           python - <<'PY'
           import json
           from pathlib import Path
