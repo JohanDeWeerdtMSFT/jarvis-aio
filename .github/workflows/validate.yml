@@ -132,8 +132,6 @@ jobs:
   hacs-runtime:
     name: HACS 2.0.5 (offline install + update)
     runs-on: ubuntu-latest
-    env:
-      HACS_TEST_COMPONENTS_PATH: ${{ runner.temp }}/hacs-runtime/custom_components
     steps:
       - uses: actions/checkout@v5
         with:
@@ -147,6 +145,8 @@ jobs:
         run: python -m pip install -r requirements-hacs-test.txt
       - name: Prepare official HACS distribution outside checkout
         # Distribution only; upstream tests/assets are not copied into this repo.
+        env:
+          HACS_TEST_COMPONENTS_PATH: ${{ runner.temp }}/hacs-runtime/custom_components
         run: |
           python - <<'PY'
           import hashlib
@@ -167,6 +167,8 @@ jobs:
               package.extractall(destination)
           PY
       - name: Real HACS command, local artifacts and installed-entry migration
+        env:
+          HACS_TEST_COMPONENTS_PATH: ${{ runner.temp }}/hacs-runtime/custom_components
         run: >-
           python -m pytest tests/hacs_runtime/ -q
           --disable-socket --allow-unix-socket
