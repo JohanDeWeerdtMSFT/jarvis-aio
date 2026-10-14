@@ -1,4 +1,4 @@
-# JARVIS traction report — 2026-10-12
+# JARVIS traction report — 2026-10-14
 
 Generated daily by `.github/workflows/traffic.yml`. What to do with these
 numbers lives in `docs/GROWTH.md` on the default branch. Clone counts
@@ -17,39 +17,19 @@ include CI checkouts, so treat views and referrers as the audience signal.
 
 | Metric | Now | 7d change | 30d change |
 |---|---:|---:|---:|
-| Stars | 26 | +1 | +9 |
-| Forks | 5 | +2 | +2 |
-| Watchers | 1 | +0 | -1 |
+| Stars | 0 | -25 | -17 |
+| Forks | 0 | -4 | -3 |
+| Watchers | 0 | -1 | -2 |
 | HA analytics installs | — | — | — |
 | Release asset downloads | 0 | +0 | +0 |
 
 ## Top referrers (rolling 14 days)
 
-| Source | Views | Uniques |
-|---|---:|---:|
-| github.com | 54 | 34 |
-| community.home-assistant.io | 33 | 32 |
-| Google | 16 | 12 |
-| chatgpt.com | 4 | 3 |
-| lm.facebook.com | 2 | 2 |
-| DuckDuckGo | 1 | 1 |
-| claude.ai | 1 | 1 |
-| l.facebook.com | 1 | 1 |
+_No referrer data (missing TRAFFIC_TOKEN, or no traffic yet)._
 
 ## Most-visited pages (rolling 14 days)
 
-| Path | Views | Uniques |
-|---|---:|---:|
-| `/sam3gp8/jarvis-aio` | 392 | 222 |
-| `/sam3gp8/jarvis-aio/issues` | 172 | 45 |
-| `/sam3gp8/jarvis-aio/releases` | 49 | 24 |
-| `/sam3gp8/jarvis-aio/tree/main/custom_components/jarvis` | 46 | 13 |
-| `/sam3gp8/jarvis-aio/pulls` | 43 | 6 |
-| `/sam3gp8/jarvis-aio/tree/main/docs` | 25 | 11 |
-| `/sam3gp8/jarvis-aio/issues/140` | 22 | 7 |
-| `/sam3gp8/jarvis-aio/tree/main` | 20 | 9 |
-| `/sam3gp8/jarvis-aio/blob/main/docs/media/residence-3d.png` | 19 | 16 |
-| `/sam3gp8/jarvis-aio/blob/main/docs/floor-plan-import.md` | 15 | 7 |
+_No page data._
 
 ## Daily views & clones (last 30 days)
 
@@ -82,5 +62,5 @@ include CI checkouts, so treat views and referrers as the audience signal.
 | 2026-09-17 | 56 | 12 | 41 | 16 |
 | 2026-09-16 | 28 | 17 | 64 | 16 |
 | 2026-09-15 | 64 | 26 | 53 | 22 |
-| 2026-09-14 | 56 | 15 | 60 | 20 |
-| 2026-09-13 | 30 | 9 | 21 | 8 |
+
+> Sources that failed today: clones, paths, referrers, views
