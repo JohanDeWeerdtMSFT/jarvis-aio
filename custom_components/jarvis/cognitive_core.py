@@ -3914,6 +3914,22 @@ def _awareness_push_wanted(action, *, pushed, routed, enabled):
     return bool(action.get("push")) and bool(enabled) and not pushed and not routed
 
 
+async def _try_push_notification(sender, *args, route: str) -> bool:
+    """Return true only when the notification endpoint confirms delivery."""
+    try:
+        result = await sender(*args)
+    except Exception as exc:
+        _LOGGER.warning("Cognitive: %s notification failed: %s", route, exc)
+        return False
+    if isinstance(result, dict) and result.get("ok") is True:
+        return True
+    error = result.get("error", "no successful delivery result") \
+        if isinstance(result, dict) else "no successful delivery result"
+    _LOGGER.warning("Cognitive: %s notification was not delivered: %s",
+                    route, error)
+    return False
+
+
 async def _emit_action(hass, config, action, sleeping):
     """Announce / push a single cognitive action via the standard routing."""
     _CORE.actions_taken += 1
@@ -3940,12 +3956,11 @@ async def _emit_action(hass, config, action, sleeping):
         if driving_mode.should_route(hass, config, driving_mode.category_for(action_type)):
             _routed = True
             _snap = action.get("snapshot_url")
-            if notify_all:
-                await _notify_all_devices(hass, config, message, action_type, _snap)
-            else:
-                await _push_notification(hass, config, message, action_type, _snap)
-            _pushed = True
-            if driving_mode.suppress_home_audio(config):
+            sender = _notify_all_devices if notify_all else _push_notification
+            _pushed = await _try_push_notification(
+                sender, hass, config, message, action_type, _snap,
+                route="driving-mode")
+            if _pushed and driving_mode.suppress_home_audio(config):
                 return
     except Exception as exc:
         _LOGGER.debug("Driving mode routing skipped: %s", exc)
@@ -3967,15 +3982,19 @@ async def _emit_action(hass, config, action, sleeping):
         except Exception:
             in_quiet = False
 
-        if (sleeping or in_quiet) and urgency != "critical" and not _routed:
+        push_only = ((sleeping or in_quiet) and urgency != "critical"
+                     and not _routed)
+        if push_only:
             # Push to phone only (no spoken announcement)
             _snap_url = action.get("snapshot_url")
-            if notify_all:
-                await _notify_all_devices(hass, config, message, action_type, _snap_url)
-            else:
-                await _push_notification(hass, config, message, action_type, _snap_url)
-            _pushed = True
-        else:
+            sender = _notify_all_devices if notify_all else _push_notification
+            _pushed = await _try_push_notification(
+                sender, hass, config, message, action_type, _snap_url,
+                route="quiet-hours")
+            if not _pushed:
+                _LOGGER.warning(
+                    "Cognitive: notification unavailable; falling back to home audio")
+        if not push_only or not _pushed:
             # Get announcement speakers from config
             ann_speakers = None
             try:
@@ -4017,11 +4036,10 @@ async def _emit_action(hass, config, action, sleeping):
             # already pushed this one to the car screen above).
             if urgency in ("critical", "high") and not _routed:
                 _snap_url = action.get("snapshot_url")
-                if notify_all:
-                    await _notify_all_devices(hass, config, message, action_type, _snap_url)
-                else:
-                    await _push_notification(hass, config, message, action_type, _snap_url)
-                _pushed = True
+                sender = _notify_all_devices if notify_all else _push_notification
+                _pushed = await _try_push_notification(
+                    sender, hass, config, message, action_type, _snap_url,
+                    route="high-priority")
 
         # ── Opt-in awareness push (issue #265) ──────────────────────────────
         # A low-urgency action flagged push-eligible — "someone is heading home"
@@ -4037,10 +4055,10 @@ async def _emit_action(hass, config, action, sleeping):
         if _awareness_push_wanted(action, pushed=_pushed, routed=_routed,
                                   enabled=_arrival_on):
             _snap_url = action.get("snapshot_url")
-            if notify_all:
-                await _notify_all_devices(hass, config, message, action_type, _snap_url)
-            else:
-                await _push_notification(hass, config, message, action_type, _snap_url)
+            sender = _notify_all_devices if notify_all else _push_notification
+            _pushed = await _try_push_notification(
+                sender, hass, config, message, action_type, _snap_url,
+                route="awareness")
 
     except Exception as exc:
         _LOGGER.warning("Cognitive: action routing failed: %s", exc)

@@ -1621,6 +1621,7 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
     success = 0
     blocked = 0
     denied = 0
+    failed = 0
     for eid in entities:
         try:
             svc_domain = eid.split(".")[0]
@@ -1663,11 +1664,16 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
                     success += 1
                 elif str(_bulk_detail).startswith("blocked by authorization"):
                     denied += 1
+                else:
+                    failed += 1
+            else:
+                failed += 1
         except Exception as exc:
             _LOGGER.warning("JARVIS: bulk device control failed: %s", exc)
+            failed += 1
 
     result = {
-        "success": True,
+        "success": bool(entities) and success == len(entities),
         "action": action,
         "domain": domain,
         "area": area_name,
@@ -1682,6 +1688,9 @@ async def _exec_bulk_control(hass: HomeAssistant, args: dict) -> str:
         result["blocked"] = blocked
         result["note"] = (f"{blocked} protected device(s) not changed in bulk; "
                           f"confirm each individually.")
+    if failed:
+        result["failed"] = failed
+        result["note_failed"] = (f"{failed} device(s) could not be changed.")
     return json.dumps(result)
 
 

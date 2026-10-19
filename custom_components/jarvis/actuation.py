@@ -838,7 +838,13 @@ async def execute_safety_actuator(hass, *, capability: str, entity_id: str,
 
     # Kill-switch → the exact direct call this path replaced.
     if not SAFETY_SEAM_ENFORCE:
-        return await _direct()
+        try:
+            return await _direct()
+        except Exception as exc:
+            _emit_failure_shadow(recovered=False)
+            _LOGGER.warning("safety direct call failed on %s (%s): %s",
+                            entity_id, capability, exc)
+            return False
 
     try:
         areq = request(capability, entity_id, params=svc_data, action=action,

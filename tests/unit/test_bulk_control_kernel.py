@@ -51,6 +51,7 @@ async def test_bulk_turn_on_publishes_event_per_target(agent, fake_hass, no_conf
     out = await agent._exec_bulk_control(
         fake_hass, {"domain": "light", "action": "turn_on"})
     res = json.loads(out)
+    assert res["success"] is True
     assert res["count"] == 2 and res["total"] == 2
     assert len(published) == 2
     assert all(e.data["capability"] == "light.turn_on" for e in published)
@@ -75,8 +76,68 @@ async def test_bulk_skips_protected_without_event(agent, fake_hass, load, monkey
     out = await agent._exec_bulk_control(
         fake_hass, {"domain": "lock", "action": "lock"})
     res = json.loads(out)
+    assert res["success"] is False
     assert res["count"] == 0 and res.get("blocked") == 2
     assert published == []   # protected devices never executed → no event
+
+
+async def test_bulk_all_authorization_denied_reports_failure(
+        agent, fake_hass, no_confirm, load, monkeypatch):
+    fake_hass.states.set("light.a", "off")
+    fake_hass.states.set("light.b", "off")
+    act = load("actuation")
+
+    async def deny(*args, **kwargs):
+        return False, "blocked by authorization gate: not allowed"
+    monkeypatch.setattr(act, "execute_actuator", deny)
+
+    result = json.loads(await agent._exec_bulk_control(
+        fake_hass, {"domain": "light", "action": "turn_on"}))
+    assert result["success"] is False
+    assert result["count"] == 0 and result["denied"] == 2
+    assert result["total"] == 2
+
+
+async def test_bulk_partial_authorization_denial_is_not_full_success(
+        agent, fake_hass, no_confirm, load, monkeypatch):
+    fake_hass.states.set("light.a", "off")
+    fake_hass.states.set("light.b", "off")
+    act = load("actuation")
+
+    async def partial(hass, *, entity_id, **kwargs):
+        if entity_id == "light.a":
+            return True, ""
+        return False, "blocked by authorization gate: not allowed"
+    monkeypatch.setattr(act, "execute_actuator", partial)
+
+    result = json.loads(await agent._exec_bulk_control(
+        fake_hass, {"domain": "light", "action": "turn_on"}))
+    assert result["success"] is False
+    assert result["count"] == 1 and result["denied"] == 1
+    assert result["total"] == 2
+
+
+@pytest.mark.parametrize("raise_error", [False, True])
+async def test_bulk_target_failure_is_counted_and_reported(
+        agent, fake_hass, no_confirm, load, monkeypatch, raise_error):
+    fake_hass.states.set("light.a", "off")
+    fake_hass.states.set("light.b", "off")
+    act = load("actuation")
+
+    async def partial(hass, *, entity_id, **kwargs):
+        if entity_id == "light.a":
+            return True, ""
+        if raise_error:
+            raise RuntimeError("service unavailable")
+        return False, "service returned failure"
+    monkeypatch.setattr(act, "execute_actuator", partial)
+
+    result = json.loads(await agent._exec_bulk_control(
+        fake_hass, {"domain": "light", "action": "turn_on"}))
+    assert result["success"] is False
+    assert result["count"] == 1 and result["failed"] == 1
+    assert result["note_failed"]
+    assert result["total"] == 2
 
 
 # ── #4b: authority parity recorded per target (log-only, covers skipped too) ──

@@ -175,6 +175,26 @@ async def test_kill_switch_reverts_to_direct_call(act, cfg, monkeypatch):
     assert ("lock", "lock", {"entity_id": "lock.front"}) in hass.service_calls
 
 
+async def test_kill_switch_direct_failure_returns_false_without_raising(
+        act, cfg, monkeypatch, caplog):
+    _allow(cfg, ("lock.front", "lock", "lock"))
+    monkeypatch.setattr(act, "SAFETY_SEAM_ENFORCE", False)
+    hass = FakeHass()
+
+    async def _svc_boom(domain, service, data=None, blocking=False, **k):
+        raise RuntimeError("HA unavailable")
+    monkeypatch.setattr(hass.services, "async_call", _svc_boom)
+
+    with caplog.at_level(logging.WARNING,
+                         logger="custom_components.jarvis.actuation"):
+        ok = await act.execute_safety_actuator(
+            hass, capability="lock.lock", entity_id="lock.front",
+            domain="lock", service="lock", data={"entity_id": "lock.front"},
+            action="lock")
+    assert ok is False
+    assert "safety direct call failed" in caplog.text
+
+
 def test_default_kill_switch_is_enforce(act):
     assert act.SAFETY_SEAM_ENFORCE is True
 
