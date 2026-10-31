@@ -1,4 +1,4 @@
-# JARVIS traction report — 2026-10-30
+# JARVIS traction report — 2026-10-31
 
 Generated daily by `.github/workflows/traffic.yml`. What to do with these
 numbers lives in `docs/GROWTH.md` on the default branch. Clone counts
@@ -20,7 +20,7 @@ include CI checkouts, so treat views and referrers as the audience signal.
 | Stars | 0 | +0 | -20 |
 | Forks | 0 | +0 | -3 |
 | Watchers | 0 | +0 | -2 |
-| HA analytics installs | 123 | +18 | — |
+| HA analytics installs | 127 | +19 | — |
 | Release asset downloads | 0 | +0 | +0 |
 
 ## Top referrers (rolling 14 days)
@@ -45,6 +45,5 @@ _No page data._
 | 2026-10-04 | 77 | 28 | 1258 | 270 |
 | 2026-10-03 | 92 | 20 | 384 | 125 |
 | 2026-10-02 | 128 | 37 | 1077 | 233 |
-| 2026-10-01 | 47 | 22 | 195 | 56 |
 
 > Sources that failed today: clones, paths, referrers, views
